@@ -68,7 +68,7 @@
     "mime": "^4.1.0",
     "node-forge": "1.4.3",
     "package-json": "10.0.1",
-    "read": "5.0.1",
+    "read": "6.0.0",
     "read-chunk": "5.0.0",
     "semver": "7.7.3",
     "socket.io": "4.8.4",

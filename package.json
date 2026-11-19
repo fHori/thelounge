@@ -101,7 +101,7 @@
     "@types/lodash": "4.17.20",
     "@types/mocha": "^10.0.10",
     "@types/mousetrap": "1.6.15",
-    "@types/node": "24.10.1",
+    "@types/node": "26.6.6",
     "@types/read": "0.0.32",
     "@types/semver": "7.7.1",
     "@types/sinon": "^20.0.0",

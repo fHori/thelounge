@@ -95,7 +95,8 @@ class Identification {
 		});
 	}
 
-	respondToIdent(socket: Socket, buffer: Buffer) {
+	// A Buffer, as no encoding is set on the socket; the types allow a string too
+	respondToIdent(socket: Socket, buffer: Buffer | string) {
 		if (!socket.remoteAddress) {
 			log.warn("identd: no remote address");
 			return;

@@ -28,6 +28,25 @@ describe("Helper", function () {
 			);
 		});
 
+		it("should keep every $ in the home directory", function () {
+			if (process.platform === "win32") {
+				this.skip();
+			}
+
+			const originalHome = process.env.HOME;
+			process.env.HOME = "/tmp/a$$b$&c$1";
+
+			try {
+				expect(Helper.expandHome("~/tmp")).to.equal("/tmp/a$$b$&c$1/tmp");
+			} finally {
+				if (originalHome === undefined) {
+					delete process.env.HOME;
+				} else {
+					process.env.HOME = originalHome;
+				}
+			}
+		});
+
 		it("should return an empty string when given an empty string", function () {
 			expect(Helper.expandHome("")).to.equal("");
 		});

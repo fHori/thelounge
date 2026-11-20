@@ -6,7 +6,6 @@ import Network from "../../../server/models/network.js";
 import message from "../../../server/plugins/irc-events/message.js";
 import {ChanState} from "../../../shared/types/chan.js";
 
-type Handler = (this: Client, ...args: Parameters<typeof message>) => void;
 type Pushed = {title: string; body: string};
 
 function setup(notifyAllMessages?: boolean) {
@@ -32,7 +31,7 @@ function setup(notifyAllMessages?: boolean) {
 		emit() {},
 	};
 
-	(message as Handler).call(
+	message.call(
 		client as unknown as Client,
 		irc as unknown as Parameters<typeof message>[0],
 		network as Parameters<typeof message>[1]

@@ -7,8 +7,6 @@ import User from "../../../server/models/user.js";
 import kick from "../../../server/plugins/irc-events/kick.js";
 import {ChanState} from "../../../shared/types/chan.js";
 
-type Handler = (this: Client, ...args: Parameters<typeof kick>) => void;
-
 function setup() {
 	const irc = Object.assign(new EventEmitter(), {user: {nick: "me"}});
 	const chan = new Chan({name: "#test", state: ChanState.JOINED});
@@ -27,7 +25,7 @@ function setup() {
 		},
 	};
 
-	(kick as Handler).call(
+	kick.call(
 		client as unknown as Client,
 		irc as unknown as Parameters<typeof kick>[0],
 		network as Parameters<typeof kick>[1]

@@ -275,7 +275,7 @@ type OtherBuild = {
 	version: number;
 	tables?: string[];
 	indexes: string[];
-	// Migrations it records that this build doesn't have
+	// What it recorded for the migrations after stock 4.5's
 	extraRollbacks?: {version: number; stmts: string[]}[];
 };
 
@@ -324,9 +324,11 @@ function createOtherBuildDb(file: string, build: OtherBuild) {
 		build.version.toString()
 	);
 
-	// The rollbacks it stored for each migration it ran
+	// The rollbacks it stored for each migration it ran. Up to stock 4.5
+	// they're the same everywhere; what each build stored after that is
+	// listed with it.
 	const stored = [
-		...rollbacks.filter((r) => r.version <= build.version),
+		...rollbacks.filter((r) => r.version <= Math.min(build.version, 1780272000000)),
 		...(build.extraRollbacks ?? []),
 	];
 
@@ -420,6 +422,10 @@ const forkBeforeMsgid: OtherBuild = {
 		...otherBuilds[1].indexes,
 		"CREATE VIRTUAL TABLE messages_fts USING fts5(text, tokenize='trigram', detail=none, content='', contentless_delete=1)",
 		"CREATE TRIGGER messages_fts_delete AFTER DELETE ON messages WHEN old.type = 'message' BEGIN DELETE FROM messages_fts WHERE rowid = old.id; END",
+	],
+	extraRollbacks: [
+		{version: 1794816000000, stmts: []},
+		rollbacks.find((r) => r.version === 1794820000000)!,
 	],
 };
 
@@ -529,19 +535,47 @@ describe("SQLite msgid column", function () {
 			Array.from({length: 20}, (_, i) => `old-msgid-${i}`)
 		);
 
-		// Stock's own rollback for the column is replaced by this build's
+		// Stock's own record of the migration is kept
 		expect(
 			store.database
 				.prepare("SELECT count(*) FROM migrations WHERE version = 1784073600000")
 				.pluck()
 				.get()
-		).to.equal(0);
+		).to.equal(1);
 
 		await roundTrip(store);
 
-		// So rolling back past it drops the column once, without failing.
-		// The search index goes too, so let its background build finish first.
+		// Rolling back to stock 4.6 keeps the column, which it needs. The
+		// search index goes, so let its background build finish first.
 		await store.finishSearchIndex();
+		await store.downgrade_to(1784073600000);
+		expect(columns(store)).to.include("msgid");
+		expect(hasIndex(store)).to.equal(true);
+		expect(
+			store.database
+				.prepare("SELECT count(*) FROM sqlite_master WHERE name = 'messages_fts'")
+				.pluck()
+				.get()
+		).to.equal(0);
+
+		// Going further back, past it, drops the column once, without failing
+		await store.downgrade_to(1780272000000);
+		expect(columns(store)).to.not.include("msgid");
+		expect(hasIndex(store)).to.equal(false);
+	});
+
+	it("should keep the column when a stock 4.5 database is rolled back to stock 4.6", async function () {
+		createOtherBuildDb(file, otherBuilds[1]);
+		const store = await open();
+
+		expect(columns(store)).to.include("msgid");
+		await store.finishSearchIndex();
+
+		await store.downgrade_to(1784073600000);
+		expect(columns(store)).to.include("msgid");
+		expect(hasIndex(store)).to.equal(true);
+		expect(await store.getMessages(net, chan, () => undefined)).to.have.lengthOf(20);
+
 		await store.downgrade_to(1780272000000);
 		expect(columns(store)).to.not.include("msgid");
 		expect(hasIndex(store)).to.equal(false);

@@ -36,7 +36,7 @@ function addColumnIfMissing(table: string, column: string, type: string): Migrat
 	};
 }
 
-// The version stock The Lounge 4.6 gave its msgid migration, see 1795000000000
+// The version stock The Lounge 4.6 gave its msgid migration
 const stockMsgidVersion = 1784073600000;
 
 // Search index over the text of `type = 'message'` rows, keyed by messages.id.
@@ -162,6 +162,16 @@ export const migrations: Migration[] = [
 		],
 	},
 	{
+		// Stock The Lounge 4.6's msgid migration, under its own version, so a
+		// database that stock 4.6 has upgraded continues from here and can be
+		// rolled back to it. It checks first, like 1795000000000 below.
+		version: stockMsgidVersion,
+		stmts: [
+			addColumnIfMissing("messages", "msgid", "TEXT"),
+			"CREATE INDEX IF NOT EXISTS msgid_idx ON messages (msgid)",
+		],
+	},
+	{
 		// This fork's own version of the migration above, from before stock
 		// had it. It is kept so databases that already ran it see no gap, and
 		// does nothing on top of it.
@@ -184,19 +194,13 @@ export const migrations: Migration[] = [
 		],
 	},
 	{
-		// IRCv3 message ids. Stock The Lounge 4.6 added this as 1784073600000,
-		// which is below this fork's own versions: databases this fork had
-		// already upgraded would skip it. So it is done here instead, and
-		// checks first, as databases coming from stock 4.6 already have both
-		// the column and the index.
+		// IRCv3 message ids again, for databases this fork had already
+		// upgraded: 1784073600000 is below their version, so they skip it.
+		// Databases that ran 1784073600000 already have both.
 		version: 1795000000000,
 		stmts: [
 			addColumnIfMissing("messages", "msgid", "TEXT"),
 			"CREATE INDEX IF NOT EXISTS msgid_idx ON messages (msgid)",
-			// Stock 4.6 stored its own rollback for the column. The one below
-			// takes its place; with both, rolling back would drop it twice.
-			`DELETE FROM rollback_steps WHERE migration_id IN (SELECT id FROM migrations WHERE version = ${stockMsgidVersion})`,
-			`DELETE FROM migrations WHERE version = ${stockMsgidVersion}`,
 		],
 	},
 ];
@@ -224,11 +228,25 @@ export const rollbacks: Rollback[] = [
 		],
 	},
 	{
+		version: stockMsgidVersion,
+		stmts: ["DROP INDEX IF EXISTS msgid_idx", "ALTER TABLE messages DROP COLUMN msgid"],
+	},
+	{
+		// The versions from here on are this fork's, and they sit above stock
+		// 4.6's: its schema has the msgid column, this fork's older builds
+		// don't. 1795000000000's rollback drops the column for those builds,
+		// so going back past this one, to stock 4.6, adds it again (the ids
+		// themselves are gone). 1784073600000's rollback then drops it for
+		// anything older.
+		//
 		// The index is undone by 1780272000000's rollback above. Databases
 		// that ran this migration before that one existed have its old
 		// rollback steps stored, which do the same thing.
 		version: 1794816000000,
-		stmts: [],
+		stmts: [
+			"ALTER TABLE messages ADD COLUMN msgid TEXT",
+			"CREATE INDEX msgid_idx ON messages (msgid)",
+		],
 	},
 	{
 		version: 1794820000000,

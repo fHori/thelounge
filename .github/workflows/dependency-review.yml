@@ -1,0 +1,28 @@
+name: Dependency review
+
+permissions:
+  contents: read
+
+# Fails a pull request that adds or upgrades to a dependency (npm or GitHub
+# Actions) with a known vulnerability of high severity or worse. Dependabot
+# reports problems in what is already merged; this stops new ones coming in.
+on:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high
+          show-patched-versions: true

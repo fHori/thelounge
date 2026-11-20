@@ -1,7 +1,6 @@
 import Msg from "../../models/msg.js";
 import LinkPrefetch from "./link.js";
 import {cleanIrcMessage} from "../../../shared/irc.js";
-import Helper from "../../helper.js";
 import Client, {IrcEventHandler} from "../../client.js";
 import Chan from "../../models/chan.js";
 import User from "../../models/user.js";
@@ -22,10 +21,24 @@ type HandleInput = {
 	from_server?: boolean;
 	message: string;
 	group?: string;
+	tags?: {[key: string]: string};
+	msgid?: string;
+	/** https://ircv3.net/specs/client-tags/channel-context */
+	channelContext?: string;
+	/** https://ircv3.net/specs/client-tags/reply */
+	replyTo?: string;
+	multiline?: boolean;
 };
 
 function convertForHandle(type: MessageType, data: MessageEventArgs): HandleInput {
-	return {...data, type: type};
+	return {
+		...data,
+		type: type,
+		msgid: data.tags?.msgid,
+		channelContext: data.tags?.["+channel-context"],
+		replyTo: data.tags?.["+reply"],
+		multiline: data.multiline,
+	};
 }
 
 export default <IrcEventHandler>function (this: Client, irc, network) {
@@ -60,11 +73,7 @@ export default <IrcEventHandler>function (this: Client, irc, network) {
 		}
 
 		// Check if the sender is in our ignore list
-		const shouldIgnore =
-			!self &&
-			network.ignoreList.some(function (entry) {
-				return Helper.compareHostmask(entry, data);
-			});
+		const shouldIgnore = !self && network.isIgnoredUser(data);
 
 		// Server messages that aren't targeted at a channel go to the server window
 		if (
@@ -87,7 +96,19 @@ export default <IrcEventHandler>function (this: Client, irc, network) {
 				target = data.nick;
 			}
 
-			chan = network.getChannel(target);
+			// +channel-context: route private messages to the specified channel
+			// https://ircv3.net/specs/client-tags/channel-context
+			if (data.channelContext && target === data.nick) {
+				const contextChan = network.getChannel(data.channelContext);
+
+				if (contextChan && contextChan.type === ChanType.CHANNEL) {
+					chan = contextChan;
+				}
+			}
+
+			if (!chan) {
+				chan = network.getChannel(target);
+			}
 
 			if (typeof chan === "undefined") {
 				// Send notices that are not targeted at us into the server window
@@ -121,6 +142,11 @@ export default <IrcEventHandler>function (this: Client, irc, network) {
 			}
 		}
 
+		// https://ircv3.net/specs/extensions/bot-mode
+		if (data.tags && "bot" in data.tags) {
+			from.isBot = true;
+		}
+
 		// msg is constructed down here because `from` is being copied in the constructor
 		const msg = new Msg({
 			type: data.type,
@@ -130,7 +156,27 @@ export default <IrcEventHandler>function (this: Client, irc, network) {
 			from: from,
 			highlight: highlight,
 			users: [],
+			msgid: data.msgid,
+			replyTo: data.replyTo,
+			multiline: data.multiline,
 		});
+
+		if (data.replyTo && chan) {
+			const parentMsg = chan.messages.find((m) => m.msgid === data.replyTo);
+
+			if (parentMsg) {
+				msg.replyToNick = parentMsg.from?.nick;
+				const cleanReplyToText = parentMsg.text
+					? cleanIrcMessage(parentMsg.text)
+					: parentMsg.text;
+				msg.replyToText = cleanReplyToText?.substring(0, 200);
+
+				// Replies to our own messages should highlight like a mention
+				if (parentMsg.self && !msg.self) {
+					msg.highlight = true;
+				}
+			}
+		}
 
 		if (showInActive) {
 			msg.showInActive = true;
@@ -184,7 +230,10 @@ export default <IrcEventHandler>function (this: Client, irc, network) {
 		// Do not send notifications if the channel is muted or for messages older than 15 minutes (znc buffer for example)
 		if (!chan.muted && notify && (!data.time || data.time > Date.now() - 900000)) {
 			let title = chan.name;
-			let body = cleanMessage;
+			// Notifications are single line, so preview the first line that has text
+			let body = cleanMessage.includes("\n")
+				? (cleanMessage.split("\n").find((line) => line.trim().length > 0) ?? cleanMessage)
+				: cleanMessage;
 
 			if (msg.type === MessageType.ACTION) {
 				// For actions, do not include colon in the message

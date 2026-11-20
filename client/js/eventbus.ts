@@ -7,7 +7,9 @@ class EventBus {
 	 * @param  {String} type    Type of event to listen for.
 	 * @param  {Function} handler Function to call in response to given event.
 	 */
-	on(type: string, handler: (...evt: unknown[]) => void) {
+	// Handlers declare their own argument types; emit() stays unknown.
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	on(type: string, handler: (...evt: any[]) => void) {
 		if (events.has(type)) {
 			events.get(type).push(handler);
 		} else {
@@ -21,7 +23,8 @@ class EventBus {
 	 * @param  {String} type    Type of event to unregister `handler` from.
 	 * @param  {Function} handler Handler function to remove.
 	 */
-	off(type: string, handler: (...evt: unknown[]) => void) {
+	// eslint-disable-next-line @typescript-eslint/no-explicit-any
+	off(type: string, handler: (...evt: any[]) => void) {
 		if (events.has(type)) {
 			events.set(
 				type,

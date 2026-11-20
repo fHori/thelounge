@@ -108,7 +108,6 @@ export default [
 			"public/**",
 			"test/public/**",
 			"coverage/**",
-			"webpack.config.mjs",
 			"*.min.js",
 		],
 	},
@@ -123,7 +122,7 @@ export default [
 				...globals.es2021,
 				...globals.browser,
 				...globals.node,
-				...globals.mocha,
+				...globals.vitest,
 			},
 		},
 		...js.configs.recommended,
@@ -152,7 +151,7 @@ export default [
 				...globals.es2021,
 				...globals.browser,
 				...globals.node,
-				...globals.mocha,
+				...globals.vitest,
 			},
 		},
 		rules: {
@@ -188,7 +187,7 @@ export default [
 				...globals.es2021,
 				...globals.browser,
 				...globals.node,
-				...globals.mocha,
+				...globals.vitest,
 			},
 		},
 		rules: {
@@ -199,10 +198,13 @@ export default [
 		},
 	},
 
-	// Test files - no special rules needed
+	// Test files: chai property assertions (`expect(x).to.be.true`) are
+	// expressions on purpose
 	{
 		files: ["test/**/*.ts"],
-		rules: {},
+		rules: {
+			"@typescript-eslint/no-unused-expressions": "off",
+		},
 	},
 
 	// Prettier must be last to override any conflicting rules

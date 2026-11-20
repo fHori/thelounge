@@ -12,7 +12,6 @@ test/fixtures/.thelounge/sts-policies.json
 *.svg
 *.ico
 *.wav
-*.tpl
 *.sh
 *.opts
 *.txt
@@ -27,6 +26,7 @@ yarn.lock
 .gitattributes
 .browserslistrc
 .dockerignore
+.node-version
 *.woff
 *.woff2
 

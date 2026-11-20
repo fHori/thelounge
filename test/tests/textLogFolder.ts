@@ -1,4 +1,4 @@
-import {expect} from "chai";
+import {expect} from "vitest";
 import Network from "../../server/models/network.js";
 import TextFileMessageStorage from "../../server/plugins/messageStorage/text.js";
 

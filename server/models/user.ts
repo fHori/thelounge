@@ -12,6 +12,7 @@ class User {
 	// Kept on the server only, see UserIdentLookup.
 	ident?: string;
 	hostname?: string;
+	isBot!: boolean;
 
 	constructor(attr: Partial<User>, prefix?: Prefix) {
 		_.defaults(this, attr, {
@@ -19,6 +20,7 @@ class User {
 			away: "",
 			nick: "",
 			lastMessage: 0,
+			isBot: false,
 		});
 
 		Object.defineProperty(this, "mode", {
@@ -40,7 +42,9 @@ class User {
 		return {
 			nick: this.nick,
 			modes: this.modes,
+			away: this.away,
 			lastMessage: this.lastMessage,
+			isBot: this.isBot,
 		};
 	}
 }

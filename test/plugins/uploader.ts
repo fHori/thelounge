@@ -9,9 +9,6 @@ import Config from "../../server/config.js";
 import Uploader from "../../server/plugins/uploader.js";
 
 describe("Uploader", function () {
-	this.timeout(util.isRunningOnCI() ? 25000 : 5000);
-	this.slow(300);
-
 	// Keep a reference to the real fetch, as the global one gets stubbed
 	// to intercept requests to the external upload providers
 	const realFetch = globalThis.fetch;
@@ -65,24 +62,26 @@ describe("Uploader", function () {
 		);
 	};
 
-	before(function (done) {
+	beforeAll(async function () {
 		uploadPathExisted = fs.existsSync(Config.getFileUploadPath());
 
 		const app = util.createWebserver();
 		Uploader.router(app);
 
-		server = app.listen(0, "127.0.0.1", () => {
-			baseURL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-			done();
+		await new Promise<void>((resolve) => {
+			server = app.listen(0, "127.0.0.1", () => {
+				baseURL = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+				resolve();
+			});
 		});
 	});
 
-	after(function (done) {
+	afterAll(async function () {
 		if (!uploadPathExisted) {
 			fs.rmSync(Config.getFileUploadPath(), {recursive: true, force: true});
 		}
 
-		server.close(done);
+		await new Promise((resolve) => server.close(resolve));
 	});
 
 	beforeEach(function () {

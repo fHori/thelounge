@@ -1,4 +1,4 @@
-import {expect} from "chai";
+import {expect} from "vitest";
 import sinon from "sinon";
 import Auth from "../../../client/js/auth.js";
 import localStorage from "../../../client/js/localStorage.js";

@@ -1,6 +1,5 @@
 import _ from "lodash";
 import {IrcEventHandler} from "../../client.js";
-import Helper from "../../helper.js";
 import Msg from "../../models/msg.js";
 import User from "../../models/user.js";
 import pkg from "../../../package.json" with {type: "json"};
@@ -20,9 +19,7 @@ export default <IrcEventHandler>function (irc, network) {
 	const lobby = network.getLobby();
 
 	irc.on("ctcp response", (data) => {
-		const shouldIgnore = network.ignoreList.some((entry) => {
-			return Helper.compareHostmask(entry, data);
-		});
+		const shouldIgnore = network.isIgnoredUser(data);
 
 		if (shouldIgnore) {
 			return;
@@ -58,9 +55,7 @@ export default <IrcEventHandler>function (irc, network) {
 					return;
 				}
 
-				const shouldIgnore = network.ignoreList.some((entry) => {
-					return Helper.compareHostmask(entry, data);
-				});
+				const shouldIgnore = network.isIgnoredUser(data);
 
 				if (shouldIgnore) {
 					return;

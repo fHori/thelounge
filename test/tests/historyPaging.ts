@@ -68,12 +68,12 @@ const settle = () => new Promise((resolve) => setImmediate(resolve));
 describe("History paging", function () {
 	let originalMaxHistory: number;
 
-	before(function () {
+	beforeAll(function () {
 		originalMaxHistory = Config.values.maxHistory;
 		Config.values.maxHistory = 150;
 	});
 
-	after(function () {
+	afterAll(function () {
 		Config.values.maxHistory = originalMaxHistory;
 	});
 

@@ -1,5 +1,5 @@
 import log from "../log.js";
-import colors from "chalk";
+import colors from "../colors.js";
 import semver from "semver";
 import Helper from "../helper.js";
 import Config from "../config.js";

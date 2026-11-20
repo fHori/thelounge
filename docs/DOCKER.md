@@ -176,3 +176,5 @@ docker compose run --rm thelounge add <name>
 `docker stop` sends SIGTERM, which The Lounge handles: it disconnects from IRC
 and exits, normally within a second. Open browser connections can hold it up
 to three seconds, after which it exits with status 1.
+
+<!-- gate test -->

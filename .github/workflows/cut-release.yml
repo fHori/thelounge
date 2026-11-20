@@ -160,7 +160,9 @@ jobs:
           DRY_RUN: ${{ inputs.dry_run }}
           FEATURES: ${{ steps.plan.outputs.features }}
         run: |
-          echo "### ${DRY_RUN/true/Dry run: }$TAG (previous: ${PREVIOUS:-none})" >> "$GITHUB_STEP_SUMMARY"
+          prefix=""
+          [[ $DRY_RUN == true ]] && prefix="Dry run: "
+          echo "### ${prefix}$TAG (previous: ${PREVIOUS:-none})" >> "$GITHUB_STEP_SUMMARY"
           if [[ $FEATURES == true ]]; then
             echo "Feature release: new features or a storage change since ${PREVIOUS:-the start}." >> "$GITHUB_STEP_SUMMARY"
           fi

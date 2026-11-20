@@ -1,4 +1,11 @@
-import {expect as chaiExpect} from "chai";
+// @vitest-environment jsdom
+import {expect as vitestExpect, vi} from "vitest";
+
+// The store's settings module imports the socket, which connects to the
+// server on import. The old webpack test build swapped it for a no-op.
+vi.mock("../../../../client/js/socket", () => ({
+	default: {on: vi.fn(), once: vi.fn(), off: vi.fn(), emit: vi.fn()},
+}));
 
 import {mount} from "@vue/test-utils";
 import ParsedMessage from "../../../../client/components/ParsedMessage.vue";
@@ -56,7 +63,7 @@ function normalize(value: unknown): unknown {
 
 function expect(actual: unknown) {
 	const check = (expected: unknown) =>
-		chaiExpect(normalize(actual)).to.deep.equal(normalize(expected));
+		vitestExpect(normalize(actual)).to.deep.equal(normalize(expected));
 	return {to: {equal: check, deep: {equal: check}}};
 }
 
@@ -86,7 +93,7 @@ describe("IRC formatted message parser", () => {
 			{
 				input: "\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0B\x0C\x0D\x0E\x0F\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1B\x1D\x1D\x1E\x1Ftext\x0Awithcontrolcodestest",
 				expected:
-					' <span class="irc-bold">         </span> <span class="irc-monospace">           </span><span class="irc-underline irc-strikethrough irc-monospace">text\nwithcontrolcodestest</span>',
+					' <span class="irc-bold">         </span> <span class="irc-monospace">           </span><span class="irc-underline irc-strikethrough irc-monospace">text</span><br>withcontrolcodestest',
 			},
 		];
 
@@ -399,6 +406,8 @@ describe("IRC formatted message parser", () => {
 					"test, " +
 					'<span data-name="MaxLeiter" role="button" dir="auto" class="user color-12">' +
 					"MaxLeiter" +
+					// Placeholders for the [bot] tag and status icon, both hidden here
+					"<!--v-if--><!--v-if-->" +
 					"</span>",
 			},
 		];
@@ -630,5 +639,32 @@ describe("IRC formatted message parser", () => {
 			'<a href="http://example.com" dir="auto" target="_blank" rel="noopener">example.com</a>' +
 				' <a href="http://example.org" dir="auto" target="_blank" rel="noopener">example.org</a>'
 		);
+	});
+
+	describe("multiline rendering", () => {
+		it("should render line feeds as <br>", () => {
+			const actual = getParsedMessageContents("hello\nworld");
+			expect(actual).to.equal("hello<br>world");
+		});
+
+		it("should preserve blank lines between segments", () => {
+			const actual = getParsedMessageContents("a\n\nb");
+			expect(actual).to.equal("a<br><br>b");
+		});
+
+		it("should parse links independently per line", () => {
+			const actual = getParsedMessageContents("see example.com\nor example.org");
+			expect(actual).to.equal(
+				"see " +
+					'<a href="http://example.com" dir="auto" target="_blank" rel="noopener">example.com</a>' +
+					"<br>or " +
+					'<a href="http://example.org" dir="auto" target="_blank" rel="noopener">example.org</a>'
+			);
+		});
+
+		it("should leave single-line input unchanged", () => {
+			const actual = getParsedMessageContents("just one line");
+			expect(actual).to.equal("just one line");
+		});
 	});
 });

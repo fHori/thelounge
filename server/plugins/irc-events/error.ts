@@ -15,6 +15,10 @@ export default <IrcEventHandler>function (irc, network) {
 			return;
 		}
 
+		if (data.error === "monitor_list_full") {
+			return;
+		}
+
 		const msg = new Msg({
 			type: MessageType.ERROR,
 			error: data.error,

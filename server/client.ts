@@ -1,9 +1,8 @@
 import _ from "lodash";
 import {UAParser} from "ua-parser-js";
-import {v4 as uuidv4} from "uuid";
 import escapeRegExp from "lodash/escapeRegExp.js";
 import crypto from "crypto";
-import colors from "chalk";
+import colors from "./colors.js";
 
 import log from "./log.js";
 import Chan, {ChanConfig} from "./models/chan.js";
@@ -53,6 +52,7 @@ const events = [
 	"list",
 	"mode",
 	"modelist",
+	"monitor",
 	"motd",
 	"message",
 	"names",
@@ -62,9 +62,11 @@ const events = [
 	"sasl",
 	"spgroups",
 	"spjoin",
+	"tagmsg",
 	"topic",
 	"welcome",
 	"whois",
+	"standard-reply",
 ];
 
 type ClientPushSubscription = {
@@ -130,7 +132,7 @@ class Client {
 	>();
 
 	constructor(manager: ClientManager, name?: string, config = {} as UserConfig) {
-		this.id = uuidv4();
+		this.id = crypto.randomUUID();
 		_.merge(this, {
 			awayMessage: "",
 			lastActiveChannel: -1,
@@ -433,10 +435,10 @@ class Client {
 		// TODO
 		// eslint-disable-next-line @typescript-eslint/no-misused-promises
 		events.forEach(async (plugin) => {
-			(await import(`./plugins/irc-events/${plugin}.js`)).default.apply(this, [
-				network.irc,
-				network,
-			]);
+			(await import(/* @vite-ignore */ `./plugins/irc-events/${plugin}.js`)).default.apply(
+				this,
+				[network.irc, network]
+			);
 		});
 
 		if (network.userDisconnected) {
@@ -525,7 +527,23 @@ class Client {
 			return;
 		}
 
-		data.text.split("\n").forEach((line) => {
+		const text: string = data.text;
+
+		// This is either a normal message or a command escaped with a leading '/'
+		const isMessage = text.charAt(0) !== "/" || text.charAt(1) === "/";
+
+		// Networks supporting draft/multiline take the whole message as a single
+		// batch, everything else has to be sent one line at a time.
+		if (isMessage && text.includes("\n")) {
+			const target = this.find(data.target);
+
+			if (target && target.network.irc?.network.cap.isEnabled("draft/multiline")) {
+				this.inputLine(data);
+				return;
+			}
+		}
+
+		text.split("\n").forEach((line) => {
 			data.text = line;
 			this.inputLine(data);
 		});
@@ -586,7 +604,13 @@ class Client {
 				return;
 			}
 
-			plugin.input.apply(this, [target.network, target.chan, cmd, args]);
+			plugin.input.apply(this, [
+				target.network,
+				target.chan,
+				cmd,
+				args,
+				{replyTo: data.replyTo},
+			]);
 			return;
 		}
 
@@ -989,6 +1013,10 @@ class Client {
 	}
 
 	part(network: Network, chan: Chan) {
+		if (chan.type === ChanType.QUERY) {
+			network.removeMonitor(chan.name);
+		}
+
 		network.channels = _.without(network.channels, chan);
 		this.mentions = this.mentions.filter((msg) => !(msg.chanId === chan.id));
 		this.massEventAggregator.cleanup(chan.id);

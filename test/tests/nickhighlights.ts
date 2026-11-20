@@ -1,4 +1,4 @@
-import {expect} from "chai";
+import {expect} from "vitest";
 
 import Network from "../../server/models/network.js";
 
@@ -57,6 +57,18 @@ describe("Nickname highlights", function () {
 
 		expect("lounge-bot, hello").to.not.match(network.highlightRegex!);
 		expect("cool_person, hello").to.match(network.highlightRegex!);
+	});
+
+	it("should respect Unicode word boundaries (issue #4930)", function () {
+		network.setNick("D");
+
+		expect("dzięki").to.not.match(network.highlightRegex as any);
+		expect("hello D").to.match(network.highlightRegex as any);
+		expect("D: hello").to.match(network.highlightRegex as any);
+
+		network.setNick("Ądam");
+
+		expect("hello ąDAM").to.match(network.highlightRegex as any);
 	});
 
 	it("should respect Unicode word boundaries (issue #4930)", function () {

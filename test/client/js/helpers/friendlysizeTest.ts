@@ -1,4 +1,4 @@
-import {expect} from "chai";
+import {expect} from "vitest";
 import friendlysize from "../../../../client/js/helpers/friendlysize.js";
 
 describe("friendlysize helper", function () {

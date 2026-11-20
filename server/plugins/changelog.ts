@@ -1,4 +1,4 @@
-import colors from "chalk";
+import colors from "../colors.js";
 import semver from "semver";
 import log from "../log.js";
 import pkg from "../../package.json" with {type: "json"};

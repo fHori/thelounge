@@ -2,7 +2,7 @@ import path from "node:path";
 import fs, {Stats} from "node:fs";
 import os from "node:os";
 import _ from "lodash";
-import colors from "chalk";
+import colors from "./colors.js";
 import {SearchOptions} from "ldapts";
 import {pathToFileURL} from "node:url";
 import type {ConnectionOptions as TlsConnectionOptions} from "node:tls";
@@ -413,20 +413,18 @@ class Config {
 		}
 
 		const manifestPath = Utils.getFileFromRelativeToRoot("public", "thelounge.webmanifest");
+		const manifestExists = fs.existsSync(manifestPath);
 
-		// Check if manifest exists, if not, the app most likely was not built
-		// Skip this check in test environment
-		if (!fs.existsSync(manifestPath)) {
-			if (process.env.NODE_ENV !== "test") {
-				log.error(
-					`The client application was not built. Run ${colors.bold(
-						"NODE_ENV=production yarn build"
-					)} to resolve this.`
-				);
-				process.exit(1);
-			}
-		} else {
-			// Load theme color from the web manifest
+		if (!manifestExists && process.env.NODE_ENV !== "test") {
+			log.error(
+				`The client application was not built. Run ${colors.bold(
+					"NODE_ENV=production yarn build"
+				)} to resolve this.`
+			);
+			process.exit(1);
+		}
+
+		if (manifestExists) {
 			const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
 			this.values.themeColor = manifest.theme_color;
 		}

@@ -1,4 +1,4 @@
-import colors from "chalk";
+import colors from "../../colors.js";
 import log from "../../log.js";
 import Helper from "../../helper.js";
 import type {AuthHandler} from "../auth.js";

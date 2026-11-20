@@ -1,4 +1,4 @@
-import {expect} from "chai";
+import {expect} from "vitest";
 import parseIrcUri from "../../../../client/js/helpers/parseIrcUri.js";
 
 describe("parseIrcUri helper", function () {

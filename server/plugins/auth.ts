@@ -1,4 +1,4 @@
-import colors from "chalk";
+import colors from "../colors.js";
 import Client from "../client.js";
 import ClientManager from "../clientManager.js";
 import log from "../log.js";

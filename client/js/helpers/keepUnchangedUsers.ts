@@ -16,7 +16,12 @@ export default function keepUnchangedUsers(previous: ClientUser[], incoming: Cli
 	return incoming.map((user) => {
 		const old = byNick.get(user.nick);
 
-		if (!old || old.away !== user.away || !sameModes(old.modes, user.modes)) {
+		if (
+			!old ||
+			old.away !== user.away ||
+			old.isBot !== user.isBot ||
+			!sameModes(old.modes, user.modes)
+		) {
 			return user;
 		}
 

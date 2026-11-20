@@ -1,4 +1,4 @@
-import {expect} from "chai";
+import {expect} from "vitest";
 
 import Chan from "../../server/models/chan.js";
 import Msg from "../../server/models/msg.js";
@@ -214,6 +214,8 @@ describe("Chan", function () {
 				"historyLoaded",
 				"pinned",
 				// the following are there in special cases, need to fix the types
+				"isOnline",
+				"userAway",
 				"num_users",
 				"special",
 				"closed",

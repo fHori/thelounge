@@ -1,0 +1,817 @@
+diff --git a/src/channel.js b/src/channel.js
+index 1612abf..cd64204 100644
+--- a/src/channel.js
++++ b/src/channel.js
+@@ -20,7 +20,7 @@ module.exports = class IrcChannel {
+ 
+         this.say = _.partial(irc_client.say.bind(irc_client), channel_name);
+         this.notice = _.partial(irc_client.notice.bind(irc_client), channel_name);
+-        // this.action = _.partial(irc_client.action.bind(irc_client), channel_name);
++        this.action = _.partial(irc_client.action.bind(irc_client), channel_name);
+         this.part = _.partial(irc_client.part.bind(irc_client), channel_name);
+         this.join = _.partial(irc_client.join.bind(irc_client), channel_name);
+         this.mode = _.partial(irc_client.mode.bind(irc_client), channel_name);
+diff --git a/src/client.js b/src/client.js
+index 41dc30d..096dcc9 100644
+--- a/src/client.js
++++ b/src/client.js
+@@ -17,6 +17,13 @@ const User = require('./user');
+ const Channel = require('./channel');
+ const { lineBreak } = require('./linebreak');
+ const MessageTags = require('./messagetags');
++const { encode: encodeUTF8 } = require('isomorphic-textencoder');
++
++let batch_reftag_counter = 0;
++function generateBatchReftag() {
++    batch_reftag_counter = (batch_reftag_counter + 1) % 0xffffffff;
++    return Date.now().toString(36) + batch_reftag_counter.toString(36);
++}
+ 
+ let default_transport = null;
+ 
+@@ -48,6 +55,7 @@ module.exports = class IrcClient extends EventEmitter {
+             enable_chghost: false,
+             enable_setname: false,
+             enable_echomessage: false,
++            enable_standardreplies: false,
+             auto_reconnect: true,
+             auto_reconnect_max_wait: 300000,
+             auto_reconnect_max_retries: 3,
+@@ -72,6 +80,10 @@ module.exports = class IrcClient extends EventEmitter {
+     createStructure() {
+         const client = this;
+ 
++        // Labeled-response tracking
++        client._labelCounter = 0;
++        client._pendingLabels = new Map();
++
+         // Provides middleware hooks for either raw IRC commands or the easier to use parsed commands
+         client.raw_middleware = new MiddlewareHandler();
+         client.parsed_middleware = new MiddlewareHandler();
+@@ -82,6 +94,11 @@ module.exports = class IrcClient extends EventEmitter {
+ 
+         client.command_handler = new IrcCommandHandler(client);
+ 
++        client.timers = {
++            ping: 0,
++            timeout: 0,
++        };
++
+         client.addCommandHandlerListeners();
+ 
+         // Proxy some connection events onto this client
+@@ -115,6 +132,10 @@ module.exports = class IrcClient extends EventEmitter {
+             client.network.cap.enabled = [];
+             client.network.cap.available.clear();
+ 
++            // Clear any pending labeled-response entries from the previous connection
++            client._pendingLabels.clear();
++            client._labelCounter = 0;
++
+             client.command_handler.resetCache();
+         });
+ 
+@@ -339,9 +360,8 @@ module.exports = class IrcClient extends EventEmitter {
+ 
+     startPeriodicPing() {
+         const client = this;
+-        let ping_timer = null;
+ 
+-        if (client.options.ping_interval <= 0) {
++        if (client.options.ping_interval <= 0 || client.timers.ping > 0) {
+             return;
+         }
+ 
+@@ -351,8 +371,8 @@ module.exports = class IrcClient extends EventEmitter {
+         }
+ 
+         function resetPingTimer() {
+-            client.connection.clearTimeout(ping_timer);
+-            ping_timer = client.connection.setTimeout(pingServer, client.options.ping_interval * 1000);
++            client.connection.clearTimeout(client.timers.ping);
++            client.timers.ping = client.connection.setTimeout(pingServer, client.options.ping_interval * 1000);
+         }
+ 
+         // Browsers have started throttling looped timeout callbacks
+@@ -362,6 +382,10 @@ module.exports = class IrcClient extends EventEmitter {
+         // Socket has disconnected, remove 'pong' listener until next 'registered' event
+         client.connection.once('socket close', () => {
+             client.command_handler.off('pong', resetPingTimer);
++            client.connection.clearTimeout(client.timers.ping);
++            client.connection.clearTimeout(client.timers.timeout);
++            client.timers.ping = 0;
++            client.timers.timeout = 0;
+         });
+ 
+         // Start timer
+@@ -370,7 +394,6 @@ module.exports = class IrcClient extends EventEmitter {
+ 
+     startPingTimeoutTimer() {
+         const client = this;
+-        let timeout_timer = null;
+ 
+         if (client.options.ping_timeout <= 0) {
+             return;
+@@ -378,8 +401,8 @@ module.exports = class IrcClient extends EventEmitter {
+ 
+         // Data from the server was detected so restart the timeout
+         function resetPingTimeoutTimer() {
+-            client.connection.clearTimeout(timeout_timer);
+-            timeout_timer = client.connection.setTimeout(pingTimeout, client.options.ping_timeout * 1000);
++            client.connection.clearTimeout(client.timers.timeout);
++            client.timers.timeout = client.connection.setTimeout(pingTimeout, client.options.ping_timeout * 1000);
+         }
+ 
+         function pingTimeout() {
+@@ -411,6 +434,48 @@ module.exports = class IrcClient extends EventEmitter {
+         }
+     }
+ 
++    /**
++     * Generate the next label value for labeled-response.
++     * Returns a short opaque string, max 64 bytes per spec.
++     */
++    _nextLabel() {
++        this._labelCounter = (this._labelCounter + 1) % 1000000;
++        return 'L' + this._labelCounter;
++    }
++
++    /**
++     * If labeled-response is enabled, generate a label, attach it to the
++     * tags object, and register it as pending. Returns the label string,
++     * or null if the cap is not enabled.
++     */
++    _applyLabel(tags) {
++        if (!this.network.cap.isEnabled('labeled-response')) {
++            return null;
++        }
++
++        const label = this._nextLabel();
++        tags.label = label;
++        this._pendingLabels.set(label, { time: Date.now() });
++        return label;
++    }
++
++    /**
++     * Resolve a pending labeled-response.
++     * Called by the command handler when a labeled response arrives.
++     */
++    _resolvePendingLabel(label, data) {
++        const pending = this._pendingLabels.get(label);
++        if (pending) {
++            if (pending.timer) {
++                clearTimeout(pending.timer);
++            }
++            this._pendingLabels.delete(label);
++        }
++
++        const event = Object.assign({ label: label }, data);
++        this.emit('labeled response', event);
++    }
++
+     rawString(input) {
+         let args;
+ 
+@@ -443,7 +508,11 @@ module.exports = class IrcClient extends EventEmitter {
+         this.raw('NICK', nick);
+     }
+ 
+-    sendMessage(commandName, target, message, tags) {
++    sendMessage(commandName, target, message, tags, options) {
++        const label_requested = options && options.label;
++        let label_applied = false;
++        const use_tags = label_requested || (tags && Object.keys(tags).length);
++
+         const lines = message
+             .split(/\r\n|\n|\r/)
+             .filter(i => i);
+@@ -461,9 +530,16 @@ module.exports = class IrcClient extends EventEmitter {
+             ];
+ 
+             blocks.forEach(block => {
+-                if (tags && Object.keys(tags).length) {
++                if (use_tags) {
+                     const msg = new IrcMessage(commandName, target, block);
+-                    msg.tags = tags;
++                    msg.tags = Object.assign(Object.create(null), tags || {});
++
++                    // Only label the first block — the server responds once per label
++                    if (label_requested && !label_applied) {
++                        this._applyLabel(msg.tags);
++                        label_applied = true;
++                    }
++
+                     this.raw(msg);
+                 } else {
+                     this.raw(commandName, target, block);
+@@ -472,12 +548,95 @@ module.exports = class IrcClient extends EventEmitter {
+         });
+     }
+ 
+-    say(target, message, tags) {
+-        return this.sendMessage('PRIVMSG', target, message, tags);
++    say(target, message, tags, options) {
++        return this.sendMessage('PRIVMSG', target, message, tags, options);
++    }
++
++    notice(target, message, tags, options) {
++        return this.sendMessage('NOTICE', target, message, tags, options);
++    }
++
++    sendMultiline(commandName, target, lines, tags) {
++        const limits = this.network.multilineLimits();
++
++        if (!limits) {
++            // as a fallback, split into individual lines
++            for (let i = 0; i < lines.length; i++) {
++                this.sendMessage(commandName, target, lines[i], tags);
++            }
++            return;
++        }
++
++        const frames = [];
++        let totalBytes = 0;
++        const maxBytes = this.options.message_max_length;
++
++        for (let i = 0; i < lines.length; i++) {
++            const line = lines[i];
++            if (i > 0) {
++                // \n separator between logical lines counts toward max-bytes per spec
++                totalBytes += 1;
++            }
++
++            if (line === '') {
++                frames.push({ message: '', concat: false });
++                continue;
++            }
++
++            const blocks = [...lineBreak(line, {
++                bytes: maxBytes,
++                allowBreakingWords: true,
++                allowBreakingGraphemes: true,
++            })];
++
++            blocks.forEach((block, blockIdx) => {
++                frames.push({
++                    message: block,
++                    concat: blockIdx > 0,
++                });
++                totalBytes += encodeUTF8(block).byteLength;
++            });
++        }
++
++        if (totalBytes > limits.maxBytes) {
++            const err = new Error('Multiline batch exceeds max-bytes limit');
++            err.code = 'MULTILINE_MAX_BYTES';
++            err.limit = limits.maxBytes;
++            throw err;
++        }
++        if (limits.maxLines !== null && frames.length > limits.maxLines) {
++            const err = new Error('Multiline batch exceeds max-lines limit');
++            err.code = 'MULTILINE_MAX_LINES';
++            err.limit = limits.maxLines;
++            throw err;
++        }
++
++        const reftag = generateBatchReftag();
++
++        const startMsg = new IrcMessage('BATCH', '+' + reftag, 'draft/multiline', target);
++        if (tags && Object.keys(tags).length) {
++            startMsg.tags = tags;
++        }
++        this.raw(startMsg);
++
++        frames.forEach((frame) => {
++            const msg = new IrcMessage(commandName, target, frame.message);
++            msg.tags = { batch: reftag };
++            if (frame.concat) {
++                msg.tags['draft/multiline-concat'] = true;
++            }
++            this.raw(msg);
++        });
++
++        this.raw('BATCH', '-' + reftag);
++    }
++
++    sayMultiline(target, lines, tags) {
++        return this.sendMultiline('PRIVMSG', target, lines, tags);
+     }
+ 
+-    notice(target, message, tags) {
+-        return this.sendMessage('NOTICE', target, message, tags);
++    noticeMultiline(target, lines, tags) {
++        return this.sendMultiline('NOTICE', target, lines, tags);
+     }
+ 
+     tagmsg(target, tags = {}) {
+@@ -654,8 +813,11 @@ module.exports = class IrcClient extends EventEmitter {
+         );
+     }
+ 
+-    action(target, message) {
++    action(target, message, tags, options) {
+         const that = this;
++        const label_requested = options && options.label;
++        let label_applied = false;
++        const has_tags = tags && Object.keys(tags).length;
+ 
+         // Maximum length of target + message we can send to the IRC server is 500 characters
+         // but we need to leave extra room for the sender prefix so the entire message can
+@@ -669,7 +831,19 @@ module.exports = class IrcClient extends EventEmitter {
+         const blocks = [...lineBreak(message, { bytes: blockLength, allowBreakingWords: true, allowBreakingGraphemes: true })];
+ 
+         blocks.forEach(function(block) {
+-            that.ctcpRequest(target, commandName, block);
++            const should_label = label_requested && !label_applied;
++            if (has_tags || should_label) {
++                const ctcpBody = String.fromCharCode(1) + commandName + ' ' + block + String.fromCharCode(1);
++                const msg = new IrcMessage('PRIVMSG', target, ctcpBody);
++                msg.tags = has_tags ? Object.assign(Object.create(null), tags) : Object.create(null);
++                if (should_label) {
++                    that._applyLabel(msg.tags);
++                    label_applied = true;
++                }
++                that.raw(msg);
++            } else {
++                that.ctcpRequest(target, commandName, block);
++            }
+         });
+ 
+         return blocks;
+diff --git a/src/commands/handler.js b/src/commands/handler.js
+index 2cb46af..c34652f 100644
+--- a/src/commands/handler.js
++++ b/src/commands/handler.js
+@@ -49,6 +49,18 @@ module.exports = class IrcCommandHandler extends EventEmitter {
+                 // has already sent the end batch command.
+             }
+         } else {
++            // Check for labeled-response on non-batched single-message responses.
++            // Batched labeled responses are handled in the BATCH end handler.
++            // ACK is handled in its own command handler.
++            const label = irc_command.getTag('label');
++            if (label && irc_command.command !== 'BATCH' && irc_command.command !== 'ACK') {
++                irc_command.label = label;
++                this.client._resolvePendingLabel(label, {
++                    type: 'single',
++                    command: irc_command,
++                });
++            }
++
+             this.executeCommand(irc_command);
+         }
+     }
+diff --git a/src/commands/handlers/messaging.js b/src/commands/handlers/messaging.js
+index afc967c..1d80594 100644
+--- a/src/commands/handlers/messaging.js
++++ b/src/commands/handlers/messaging.js
+@@ -44,7 +44,9 @@ const handlers = {
+                 tags: command.tags,
+                 time: time,
+                 account: command.getTag('account'),
+-                batch: command.batch
++                batch: command.batch,
++                label: command.label || command.getTag('label') || undefined,
++                multiline: !!command.multiline,
+             });
+         }
+     },
+@@ -76,7 +78,8 @@ const handlers = {
+                     tags: command.tags,
+                     time: time,
+                     account: command.getTag('account'),
+-                    batch: command.batch
++                    batch: command.batch,
++                    label: command.label || command.getTag('label') || undefined,
+                 });
+             } else if (ctcp_command === 'VERSION' && handler.connection.options.version) {
+                 handler.connection.write(util.format(
+@@ -111,7 +114,9 @@ const handlers = {
+                 tags: command.tags,
+                 time: time,
+                 account: command.getTag('account'),
+-                batch: command.batch
++                batch: command.batch,
++                label: command.label || command.getTag('label') || undefined,
++                multiline: !!command.multiline,
+             });
+         }
+     },
+diff --git a/src/commands/handlers/misc.js b/src/commands/handlers/misc.js
+index 2fcef18..fde8454 100644
+--- a/src/commands/handlers/misc.js
++++ b/src/commands/handlers/misc.js
+@@ -6,6 +6,7 @@ const _ = {
+     map: require('lodash/map'),
+ };
+ const Helpers = require('../../helpers');
++const IrcCommand = require('../command');
+ 
+ const handlers = {
+     RPL_LISTSTART: function(command, handler) {
+@@ -300,6 +301,21 @@ const handlers = {
+         cache.destroy();
+     },
+ 
++    FAIL: standardReply,
++
++    WARN: standardReply,
++
++    NOTE: standardReply,
++
++    ACK: function(command, handler) {
++        const label = command.getTag('label');
++        if (label) {
++            handler.client._resolvePendingLabel(label, {
++                type: 'ack',
++            });
++        }
++    },
++
+     BATCH: function(command, handler) {
+         const batch_start = command.params[0].substr(0, 1) === '+';
+         const batch_id = command.params[0].substr(1);
+@@ -315,6 +331,23 @@ const handlers = {
+             cache.type = command.params[1];
+             cache.params = command.params.slice(2);
+ 
++            // If the batch start has a label tag, store it for resolution
++            // when the batch ends (per labeled-response spec, the label is
++            // on the BATCH + opener)
++            const label = command.getTag('label');
++            if (label) {
++                cache.label = label;
++            }
++
++            // https://ircv3.net/specs/extensions/multiline#message-tags-spec
++            if (cache.type === 'draft/multiline') {
++                cache.tags = command.tags;
++                cache.prefix = command.prefix;
++                cache.nick = command.nick;
++                cache.ident = command.ident;
++                cache.hostname = command.hostname;
++            }
++
+             return;
+         }
+ 
+@@ -330,28 +363,59 @@ const handlers = {
+             id: batch_id,
+             type: cache.type,
+             params: cache.params,
+-            commands: cache.commands
++            commands: cache.commands,
++            label: cache.label || null,
+         };
+ 
+         // Destroy the cache object before executing each command. If one
+         // errors out then we don't have the cache object stuck in memory.
+         cache.destroy();
+ 
++        // Resolve the pending labeled-response if this batch was labeled
++        if (emit_obj.label) {
++            handler.client._resolvePendingLabel(emit_obj.label, {
++                type: 'batch',
++                batchType: emit_obj.type,
++                commands: emit_obj.commands,
++            });
++        }
++
+         handler.emit('batch start', emit_obj);
+         handler.emit('batch start ' + emit_obj.type, emit_obj);
+-        emit_obj.commands.forEach((c) => {
+-            c.batch = {
+-                id: batch_id,
+-                type: cache.type,
+-                params: cache.params
+-            };
+-            handler.executeCommand(c);
+-        });
++        if (cache.type === 'draft/multiline') {
++            handleMultilineBatch(emit_obj, cache, handler);
++        } else {
++            emit_obj.commands.forEach((c) => {
++                c.batch = {
++                    id: batch_id,
++                    type: cache.type,
++                    params: cache.params
++                };
++                if (emit_obj.label) {
++                    c.label = emit_obj.label;
++                }
++                handler.executeCommand(c);
++            });
++        }
++
+         handler.emit('batch end', emit_obj);
+         handler.emit('batch end ' + emit_obj.type, emit_obj);
+     }
+ };
+ 
++function standardReply(command, handler) {
++    const [cmd, code, ...context] = command.params;
++    const description = context.pop();
++    handler.emit('standard reply', {
++        type: command.command,
++        command: cmd,
++        code,
++        context,
++        description,
++        tags: command.tags,
++    });
++}
++
+ module.exports = function AddCommandHandlers(command_controller) {
+     _.each(handlers, function(handler, handler_command) {
+         command_controller.addHandler(handler_command, handler);
+@@ -368,3 +432,76 @@ function getChanListCache(handler) {
+ 
+     return cache;
+ }
++
++// https://ircv3.net/specs/extensions/multiline
++function handleMultilineBatch(emit_obj, cache, handler) {
++    const lines = emit_obj.commands;
++
++    if (lines.length === 0) {
++        return;
++    }
++
++    // Use same command (PRIVMSG or NOTICE) and target for all lines
++    const first = lines[0];
++    const lineCommand = first.command;
++    if (lineCommand !== 'PRIVMSG' && lineCommand !== 'NOTICE') {
++        return;
++    }
++
++    const target = first.params[0];
++
++    let allBlank = true;
++    for (let i = 0; i < lines.length; i++) {
++        const c = lines[i];
++        if (c.command !== lineCommand) {
++            return;
++        }
++        if (c.params[0] !== target) {
++            return;
++        }
++        const msg = c.params[c.params.length - 1];
++        const isBlank = msg === '';
++        if (!isBlank) {
++            allBlank = false;
++        }
++        if (isBlank && c.tags && c.tags['draft/multiline-concat'] !== undefined) {
++            // https://ircv3.net/specs/extensions/multiline#batch-types
++            // "Clients MUST NOT send blank lines with the draft/multiline-concat tag.""
++            return;
++        }
++    }
++
++    if (allBlank) {
++        return;
++    }
++
++    let combined = '';
++    for (let i = 0; i < lines.length; i++) {
++        const c = lines[i];
++        const msg = c.params[c.params.length - 1];
++        if (i === 0) {
++            combined = msg;
++        } else if (c.tags && c.tags['draft/multiline-concat'] !== undefined) {
++            combined += msg;
++        } else {
++            combined += '\n' + msg;
++        }
++    }
++
++    const tmp = new IrcCommand(lineCommand, {
++        params: [target, combined],
++        tags: cache.tags || Object.create(null),
++        prefix: cache.prefix !== undefined ? cache.prefix : first.prefix,
++        nick: cache.nick !== undefined ? cache.nick : first.nick,
++        ident: cache.ident !== undefined ? cache.ident : first.ident,
++        hostname: cache.hostname !== undefined ? cache.hostname : first.hostname,
++    });
++    tmp.batch = {
++        id: emit_obj.id,
++        type: emit_obj.type,
++        params: emit_obj.params,
++    };
++    tmp.multiline = true;
++
++    handler.executeCommand(tmp);
++}
+diff --git a/src/commands/handlers/registration.js b/src/commands/handlers/registration.js
+index 209a4aa..a365c38 100644
+--- a/src/commands/handlers/registration.js
++++ b/src/commands/handlers/registration.js
+@@ -87,6 +87,16 @@ const handlers = {
+             } else if (option[0] === 'CLIENTTAGDENY') {
+                 // https://ircv3.net/specs/extensions/message-tags#rpl_isupport-tokens
+                 handler.network.options.CLIENTTAGDENY = option[1].split(',').filter((f) => !!f);
++            } else if (option[0] === 'EXTBAN') {
++                // https://ircv3.net/specs/extensions/account-extban
++                const parts = option[1].split(',');
++                handler.network.options.EXTBAN = {
++                    prefix: parts[0] || '',
++                    types: parts.slice(1).join('').split(''),
++                };
++            } else if (option[0] === 'ACCOUNTEXTBAN') {
++                // https://ircv3.net/specs/extensions/account-extban
++                handler.network.options.ACCOUNTEXTBAN = option[1].split(',').filter((f) => !!f);
+             } else if (option[0] === 'NETWORK') {
+                 handler.network.name = option[1];
+             } else if (option[0] === 'NAMESX' && !handler.network.cap.isEnabled('multi-prefix')) {
+@@ -166,6 +176,17 @@ const handlers = {
+         if (handler.connection.options.enable_echomessage) {
+             want.push('echo-message');
+         }
++        if (handler.connection.options.enable_standardreplies) {
++            want.push('standard-replies');
++        }
++        if (handler.connection.options.enable_echomessage) {
++            // labeled-response requires batch and is most
++            // useful alongside echo-message for correlating sent messages
++            want.push('labeled-response');
++        }
++        if (handler.connection.options.enable_multiline) {
++            want.push('draft/multiline');
++        }
+ 
+         want = _.uniq(want.concat(handler.request_extra_caps));
+ 
+@@ -323,11 +344,6 @@ const handlers = {
+     },
+ 
+     RPL_LOGGEDIN: function(command, handler) {
+-        if (handler.network.cap.negotiating === true) {
+-            handler.connection.write('CAP END');
+-            handler.network.cap.negotiating = false;
+-        }
+-
+         const mask = Helpers.parseMask(command.params[1]);
+ 
+         // Check if we have a server-time
+diff --git a/src/commands/handlers/user.js b/src/commands/handlers/user.js
+index 575a168..f0bff1d 100644
+--- a/src/commands/handlers/user.js
++++ b/src/commands/handlers/user.js
+@@ -310,19 +310,23 @@ const handlers = {
+         const cache_key = command.params[1].toLowerCase();
+         const cache = handler.cache('whois.' + cache_key);
+ 
+-        // <source> 338 <target> <nick> [<user>@]<host> <ip> :Actual user@host, Actual IP
+-        const user_host = command.params[command.params.length - 3] || '';
+-        const mask_sep = user_host.indexOf('@');
+-        const user = user_host.substring(0, mask_sep) || undefined;
+-        const host = user_host.substring(mask_sep + 1);
+-        const ip = command.params[command.params.length - 2];
+-
+-        // UnrealIRCd uses this numeric for something else resulting in ip+host
+-        // to be empty, so ignore this is that's the case
+-        if (ip && host) {
+-            cache.actual_ip = ip;
+-            cache.actual_username = user;
+-            cache.actual_hostname = host;
++        // Until 2018 (commit 5044013) UnrealIRCd used to use this numeric for
++        // RPL_IRCOPS. If there's not enough parameters for it to be the numeric
++        // we expect then just ignore it.
++        if (command.params.length < 4) {
++            return;
++        }
++
++        // <source> 338 <target> <nick> [[<user>@]<host>] <ip> :Actual user@host, Actual IP
++        cache.actual_ip = command.params[command.params.length - 2];
++
++        // Some servers (e.g. Libera.Chat) only return an actual IP address.
++        if (command.params.length > 4) {
++            const user_host = command.params[command.params.length - 3];
++            const mask_sep = user_host.indexOf('@');
++
++            cache.actual_username = user_host.substring(0, mask_sep) || undefined;
++            cache.actual_hostname = user_host.substring(mask_sep + 1);
+         }
+     },
+ 
+diff --git a/src/connection.js b/src/connection.js
+index d348b54..3d98a89 100644
+--- a/src/connection.js
++++ b/src/connection.js
+@@ -15,7 +15,7 @@ module.exports = class Connection extends EventEmitter {
+         this.connected = false;
+         this.requested_disconnect = false;
+ 
+-        this.reconnect_attempts = 0;
++        this.reconnect_attempts = 1;
+ 
+         // When an IRC connection was successfully registered.
+         this.registered = false;
+@@ -31,6 +31,7 @@ module.exports = class Connection extends EventEmitter {
+ 
+     registeredSuccessfully() {
+         this.registered = Date.now();
++        this.reconnect_attempts = 0;
+     }
+ 
+     connect(options) {
+@@ -83,7 +84,6 @@ module.exports = class Connection extends EventEmitter {
+         // Called when the socket is connected and ready to start sending/receiving data.
+         function socketOpen() {
+             that.debugOut('Socket fully connected');
+-            that.reconnect_attempts = 0;
+             that.connected = true;
+             that.emit('socket connected');
+         }
+diff --git a/src/networkinfo.js b/src/networkinfo.js
+index e759e14..eef61d3 100644
+--- a/src/networkinfo.js
++++ b/src/networkinfo.js
+@@ -80,6 +80,41 @@ function NetworkInfo() {
+         return this.options[support_name.toUpperCase()];
+     };
+ 
++    this.multilineLimits = function multilineLimits() {
++        if (!this.cap.isEnabled('draft/multiline')) {
++            return null;
++        }
++
++        const value = this.cap.available.get('draft/multiline');
++        if (typeof value !== 'string' || value === '') {
++            return null;
++        }
++
++        const limits = { maxBytes: 0, maxLines: null };
++        value.split(',').forEach((token) => {
++            const sep = token.indexOf('=');
++            if (sep === -1) {
++                return;
++            }
++            const key = token.substr(0, sep);
++            const num = parseInt(token.substr(sep + 1), 10);
++            if (Number.isNaN(num)) {
++                return;
++            }
++            if (key === 'max-bytes') {
++                limits.maxBytes = num;
++            } else if (key === 'max-lines') {
++                limits.maxLines = num;
++            }
++        });
++
++        if (limits.maxBytes <= 0) {
++            return null;
++        }
++
++        return limits;
++    };
++
+     this.supportsTag = function supportsTag(tag_name) {
+         if (!this.cap.isEnabled('message-tags')) {
+             return false;
+@@ -97,6 +132,15 @@ function NetworkInfo() {
+         return this.options.CLIENTTAGDENY.some((tag) => tag === `-${tag_name}`);
+     };
+ 
++    this.accountBanMask = function accountBanMask(account) {
++        if (!this.options.EXTBAN || !this.options.ACCOUNTEXTBAN || !this.options.ACCOUNTEXTBAN.length) {
++            return null;
++        }
++
++        const type = this.options.ACCOUNTEXTBAN[0];
++        return this.options.EXTBAN.prefix + type + ':' + account;
++    };
++
+     this.isChannelName = function isChannelName(channel_name) {
+         if (typeof channel_name !== 'string' || channel_name === '') {
+             return false;
+diff --git a/src/transports/net.js b/src/transports/net.js
+index 301525c..dcd7d78 100644
+--- a/src/transports/net.js
++++ b/src/transports/net.js
+@@ -126,7 +126,14 @@ module.exports = class Connection extends EventEmitter {
+             }).catch(this.onSocketError.bind(this));
+         } else {
+             let socket = null;
+-            if (options.tls || options.ssl) {
++            if ((options.tls || options.ssl) && options.path) {
++                socket = this.socket = tls.connect({
++                    path: options.path,
++                    rejectUnauthorized: options.rejectUnauthorized,
++                    key: options.client_certificate && options.client_certificate.private_key,
++                    cert: options.client_certificate && options.client_certificate.certificate,
++                });
++            } else if (options.tls || options.ssl) {
+                 socket = this.socket = tls.connect({
+                     servername: sni,
+                     host: ircd_host,
+@@ -137,6 +144,10 @@ module.exports = class Connection extends EventEmitter {
+                     localAddress: options.outgoing_addr,
+                     family: this.getAddressFamily(options.outgoing_addr)
+                 });
++            } else if (options.path) {
++                socket = this.socket = net.connect({
++                    path: options.path
++                });
+             } else {
+                 socket = this.socket = net.connect({
+                     host: ircd_host,

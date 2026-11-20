@@ -1,5 +1,5 @@
 import log from "../../../server/log.js";
-import {expect, assert} from "chai";
+import {expect, assert} from "vitest";
 import TestUtil from "../../util.js";
 import sinon from "sinon";
 import packagePlugin from "../../../server/plugins/packages";

@@ -2,11 +2,14 @@ import _ from "lodash";
 import log from "../log.js";
 import fs from "fs";
 import path from "path";
-import * as WebPushAPI from "web-push";
 import Config from "../config.js";
 import Client from "../client.js";
 import * as os from "os";
 import {setTrackerKeySecret} from "./trackerNetworks.js";
+
+import type {PushSubscription, VapidDetails} from "web-push-neo";
+
+type WebPushNeo = typeof import("web-push-neo");
 
 export interface WebPushPayload {
 	type: "notification";
@@ -15,13 +18,25 @@ export interface WebPushPayload {
 	title: string;
 	body: string;
 }
+
 class WebPush {
 	vapidKeys?: {
 		publicKey: string;
 		privateKey: string;
 	};
+	private vapidDetails?: VapidDetails;
+	private webPushModule?: WebPushNeo;
 
-	constructor() {
+	private async loadWebPush(): Promise<WebPushNeo> {
+		if (!this.webPushModule) {
+			// Loaded on first use only
+			this.webPushModule = await import("web-push-neo");
+		}
+
+		return this.webPushModule;
+	}
+
+	async init() {
 		const vapidPath = path.join(Config.getHomePath(), "vapid.json");
 
 		let vapidStat: fs.Stats | undefined = undefined;
@@ -62,7 +77,8 @@ class WebPush {
 		}
 
 		if (!this.vapidKeys) {
-			this.vapidKeys = WebPushAPI.generateVAPIDKeys();
+			const webPush = await this.loadWebPush();
+			this.vapidKeys = await webPush.generateVAPIDKeys();
 
 			fs.writeFileSync(vapidPath, JSON.stringify(this.vapidKeys, null, "\t"), {
 				mode: 0o600,
@@ -74,11 +90,11 @@ class WebPush {
 		// Also the persisted secret tracker network keys are derived from
 		setTrackerKeySecret(this.vapidKeys.privateKey);
 
-		WebPushAPI.setVapidDetails(
-			"https://github.com/fHori/thelounge",
-			this.vapidKeys.publicKey,
-			this.vapidKeys.privateKey
-		);
+		this.vapidDetails = {
+			subject: "https://github.com/fHori/thelounge",
+			publicKey: this.vapidKeys.publicKey,
+			privateKey: this.vapidKeys.privateKey,
+		};
 	}
 
 	push(client: Client, payload: WebPushPayload, onlyToOffline: boolean) {
@@ -88,13 +104,18 @@ class WebPush {
 					return;
 				}
 
-				this.pushSingle(client, pushSubscription, payload);
+				void this.pushSingle(client, pushSubscription, payload);
 			}
 		});
 	}
 
-	pushSingle(client: Client, subscription: WebPushAPI.PushSubscription, payload: WebPushPayload) {
-		WebPushAPI.sendNotification(subscription, JSON.stringify(payload)).catch((error) => {
+	async pushSingle(client: Client, subscription: PushSubscription, payload: WebPushPayload) {
+		try {
+			const webPush = await this.loadWebPush();
+			await webPush.sendNotification(subscription, JSON.stringify(payload), {
+				vapidDetails: this.vapidDetails,
+			});
+		} catch (error: any) {
 			if (error.statusCode >= 400 && error.statusCode < 500) {
 				log.warn(
 					`WebPush subscription for ${client.name} returned an error (${String(
@@ -112,7 +133,7 @@ class WebPush {
 			}
 
 			log.error(`WebPush Error (${String(error)})`);
-		});
+		}
 	}
 }
 

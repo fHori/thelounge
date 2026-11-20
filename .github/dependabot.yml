@@ -17,11 +17,7 @@ updates:
       minor-and-patch:
         update-types: [minor, patch]
     ignore:
-      # 2.1.x declares itself an ES module but is CommonJS inside, which
-      # breaks the client build ("require is not defined in ES module scope")
-      - dependency-name: babel-preset-typescript-vue3
-        versions: [">=2.1.0"]
-      # 6 needs Node.js 22.22 or newer, this project supports 20
+      # 6 needs Node.js 22.22 or newer, this project supports 22.0
       - dependency-name: read
         update-types: ["version-update:semver-major"]
       # 2 and 3 change the API and no longer strip directories from the

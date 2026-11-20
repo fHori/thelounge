@@ -6,22 +6,14 @@ permissions:
 # Releases (versioned image tags and :latest) are cut by cut-release.yml; this
 # workflow checks pull requests and publishes master as :edge.
 #
-# Changes to documentation alone skip it: Markdown is not in the image
-# (.dockerignore) and no code reads it. docs.yml checks its formatting.
+# It always runs and always reports the "CI" check, which master's ruleset
+# requires. Changes to documentation alone skip the tests and images: Markdown
+# is not in the image (.dockerignore) and no code reads it. Their formatting is
+# still checked.
 on:
   push:
     branches: [master]
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - "LICENSE"
   pull_request:
-    paths-ignore:
-      - "**.md"
-      - "docs/**"
-      - ".github/ISSUE_TEMPLATE/**"
-      - "LICENSE"
 
 # A new push to a pull request cancels its older, still running checks
 concurrency:
@@ -29,10 +21,43 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+      docs: ${{ steps.diff.outputs.docs }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: What changed
+        id: diff
+        env:
+          BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -euo pipefail
+          # No usable base (a new branch, or history rewritten): check everything
+          if [[ -z $BASE || $BASE =~ ^0+$ ]] || ! files=$(git diff --name-only "$BASE...$GITHUB_SHA"); then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            echo "docs=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          docs_re='(\.md$|^docs/|^\.github/ISSUE_TEMPLATE/|^LICENSE$)'
+          code=false; docs=false
+          grep -qvE "$docs_re" <<< "$files" && code=true
+          grep -qE '\.md$' <<< "$files" && docs=true
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "docs=$docs" >> "$GITHUB_OUTPUT"
+          { echo "Code changed: $code, Markdown changed: $docs"; echo; echo '```'; echo "$files"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
   # Tests and per-architecture image builds run in parallel, as before.
   # Pull requests stop at checking that the image builds; master pushes
   # publish :edge and :sha-<short>.
   pipeline:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     uses: ./.github/workflows/pipeline.yml
     permissions:
       contents: read
@@ -43,3 +68,44 @@ jobs:
       ref: ${{ github.sha }}
       push: ${{ github.event_name == 'push' }}
       channel: ${{ github.event_name == 'push' && 'edge' || 'none' }}
+
+  # The test job's lint runs Prettier on Markdown too; this covers changes to
+  # documentation alone, with the Prettier version from yarn.lock and nothing
+  # else installed
+  docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' && needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22.x
+
+      - name: Check formatting
+        run: |
+          version=$(grep -A3 '^"prettier@' yarn.lock | grep -m1 '^  version' | grep -o '[0-9][0-9.]*')
+          echo "Prettier $version"
+          npx --yes "prettier@$version" --check "**/*.md"
+
+  # The one check master requires. Skipped jobs are fine (nothing of theirs
+  # changed); a failed or cancelled one fails it.
+  ci:
+    name: CI
+    needs: [changes, pipeline, docs]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All checks passed
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "Results: $RESULTS"
+          if [[ " $RESULTS " =~ \ (failure|cancelled)\  ]]; then
+            echo "::error::A required job failed or was cancelled"
+            exit 1
+          fi

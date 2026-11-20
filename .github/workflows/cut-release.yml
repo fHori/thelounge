@@ -2,8 +2,11 @@
 # Run it from Actions > Release > Run workflow; see docs/RELEASING.md.
 # refresh.yml calls it weekly to cut a base-image refresh release.
 #
-# Everything uses GITHUB_TOKEN. Its tag push does not start other workflows,
-# so the images are built here, through the reusable pipeline.yml.
+# Everything uses GITHUB_TOKEN, except pushing the release commit to master:
+# master's ruleset requires the CI check, which GITHUB_TOKEN cannot bypass on
+# a personal repository, so that push uses the RELEASE_DEPLOY_KEY deploy key,
+# which the ruleset lets through. The images are built here, through the
+# reusable pipeline.yml; Build skips the release commit.
 name: Release
 
 on:
@@ -195,8 +198,9 @@ jobs:
       # true: commit the version to package.json and tag that commit (pushed
       # to the branch together with the tag). false: tag the tested commit as
       # is; the image still reports the right version (build arg), but
-      # package.json in git keeps its old version. Use false if master gets
-      # branch protection that GITHUB_TOKEN cannot bypass.
+      # package.json in git keeps its old version. Use false if the deploy
+      # key (RELEASE_DEPLOY_KEY) is ever removed: master's ruleset would
+      # refuse the push.
       COMMIT_BUMP: "true"
       TAG: ${{ needs.plan.outputs.tag }}
       VERSION: ${{ needs.plan.outputs.version }}
@@ -206,10 +210,14 @@ jobs:
       DRY_RUN: ${{ inputs.dry_run }}
 
     steps:
+      # Pushes with the deploy key, which master's ruleset lets through. When
+      # called from refresh.yml there is no secret and the token is used: a
+      # refresh pushes only its tag, which the ruleset does not cover.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ needs.plan.outputs.base_sha }}
           fetch-depth: 0
+          ssh-key: ${{ secrets.RELEASE_DEPLOY_KEY }}
 
       - name: Bump, commit and tag
         id: tag
@@ -270,8 +278,8 @@ jobs:
       version: ${{ needs.plan.outputs.version }}
       latest: ${{ needs.plan.outputs.latest == 'true' }}
       line_latest: ${{ needs.plan.outputs.line_latest == 'true' }}
-      # The release commit becomes master's newest commit but starts no build
-      # itself, so the release image is also edge. Not for a refresh or a
+      # The release commit becomes master's newest commit, and Build skips
+      # it, so the release image is also edge. Not for a refresh or a
       # hotfix from a release/* branch, which are not master's newest code.
       edge: ${{ github.ref_name == github.event.repository.default_branch && inputs.refresh != true }}
       # `refresh` only exists when called from refresh.yml; when the workflow

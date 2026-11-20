@@ -55,9 +55,16 @@ jobs:
   # Tests and per-architecture image builds run in parallel, as before.
   # Pull requests stop at checking that the image builds; master pushes
   # publish :edge and :sha-<short>.
+  #
+  # Not for the release commit the Release workflow pushes to master: it
+  # builds and publishes that commit's images itself, :edge included.
   pipeline:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: >-
+      needs.changes.outputs.code == 'true'
+      && !(github.event_name == 'push'
+      && startsWith(github.event.head_commit.message, 'Release v')
+      && github.event.head_commit.author.name == 'github-actions[bot]')
     uses: ./.github/workflows/pipeline.yml
     permissions:
       contents: read

@@ -1958,12 +1958,23 @@ textarea.input {
 	display: flex;
 	align-items: flex-start;
 	position: relative;
+}
 
-	/* Up to 500 rows are rendered; the browser skips laying out those off
-	   screen, which is most of the work when a busy channel scrolls. A row
-	   keeps its last measured height while skipped. */
-	content-visibility: auto;
-	contain-intrinsic-size: auto 24px;
+/* Up to 500 rows are rendered; the browser skips laying out those off
+   screen, which is most of the work when a busy channel scrolls. A row
+   keeps its last measured height while skipped, but one that was never on
+   screen is a 24px guess and grows when scrolled to. Scroll anchoring keeps
+   the view still while it does. Without it (Safari before 27, so every
+   browser on older iOS) the view jumps with each such row, and phones, where
+   rows wrap the most, jittered when scrolling up through history. So only
+   with anchoring, and not on touch screens. */
+@supports (overflow-anchor: auto) {
+	@media not (pointer: coarse) {
+		#chat .msg {
+			content-visibility: auto;
+			contain-intrinsic-size: auto 24px;
+		}
+	}
 }
 
 #chat .unread-marker {

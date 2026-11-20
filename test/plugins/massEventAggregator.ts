@@ -18,7 +18,7 @@ describe("Mass event aggregation", function () {
 	let originalPublic: boolean;
 	let clock: sinon.SinonFakeTimers;
 
-	before(function () {
+	beforeAll(function () {
 		originalConfig = Config.values.massEventDetection;
 		originalMaxHistory = Config.values.maxHistory;
 		originalPublic = Config.values.public;
@@ -26,7 +26,7 @@ describe("Mass event aggregation", function () {
 		Config.values.public = false;
 	});
 
-	after(function () {
+	afterAll(function () {
 		Config.values.massEventDetection = originalConfig;
 		Config.values.maxHistory = originalMaxHistory;
 		Config.values.public = originalPublic;

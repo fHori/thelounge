@@ -39,16 +39,15 @@
 						{{ group }}
 					</div>
 					<template v-if="userSearchInput.length > 0">
-						<!-- eslint-disable vue/no-v-text-v-html-on-component -->
 						<Username
 							v-for="user in users"
 							:key="user.original!.nick + '-search'"
 							:on-hover="hoverUser"
 							:active="user.original === activeUser"
 							:user="user.original!"
-							v-html="user.string"
+							:html="user.string"
+							:include-status-icon="showStatusIndicators"
 						/>
-						<!-- eslint-enable -->
 					</template>
 					<template v-else>
 						<Username
@@ -57,6 +56,7 @@
 							:on-hover="hoverUser"
 							:active="user === activeUser"
 							:user="user"
+							:include-status-icon="showStatusIndicators"
 						/>
 					</template>
 				</div>
@@ -69,16 +69,15 @@
 					:class="['user-mode', getModeClass(String(mode))]"
 				>
 					<template v-if="userSearchInput.length > 0">
-						<!-- eslint-disable vue/no-v-text-v-html-on-component -->
 						<Username
 							v-for="user in users"
 							:key="user.original.nick + '-search'"
 							:on-hover="hoverUser"
 							:active="user.original === activeUser"
 							:user="user.original"
-							v-html="user.string"
+							:html="user.string"
+							:include-status-icon="showStatusIndicators"
 						/>
-						<!-- eslint-enable -->
 					</template>
 					<template v-else>
 						<Username
@@ -87,6 +86,7 @@
 							:on-hover="hoverUser"
 							:active="user === activeUser"
 							:user="user"
+							:include-status-icon="showStatusIndicators"
 						/>
 					</template>
 				</div>
@@ -132,10 +132,11 @@
 import {filter as fuzzyFilter} from "fuzzy";
 import {computed, defineComponent, nextTick, PropType, ref} from "vue";
 import type {UserInMessage} from "../../shared/types/msg";
-import type {ClientChan, ClientUser} from "../js/types";
+import type {ClientChan, ClientNetwork, ClientUser} from "../js/types";
+import {useStore} from "../js/store";
 import Username from "./Username.vue";
 import groupSlug from "../js/helpers/groupSlug";
-import {useStore} from "../js/store";
+import shouldShowUserListStatus from "../js/helpers/statusIndicators";
 
 const modes = {
 	"~": "owner",
@@ -153,6 +154,7 @@ export default defineComponent({
 		Username,
 	},
 	props: {
+		network: {type: Object as PropType<ClientNetwork>, required: true},
 		channel: {type: Object as PropType<ClientChan>, required: true},
 	},
 	setup(props) {
@@ -239,7 +241,7 @@ export default defineComponent({
 		});
 
 		const standardGroupedUsers = computed(() => {
-			const groups = {};
+			const groups: Record<string, unknown[]> = {};
 
 			if (!hasCustomGroups.value) {
 				if (userSearchInput.value && filteredUsers.value) {
@@ -263,7 +265,12 @@ export default defineComponent({
 				}
 			}
 
-			return groups;
+			return groups as {
+				[mode: string]: (ClientUser & {
+					original: UserInMessage;
+					string: string;
+				})[];
+			};
 		});
 
 		const groupedUsers = computed(() => {
@@ -371,6 +378,14 @@ export default defineComponent({
 			scrollToActiveUser();
 		};
 
+		const showStatusIndicators = computed(() =>
+			shouldShowUserListStatus(
+				store.state.settings.statusIndicators,
+				store.state.settings.statusIndicatorsLiveOnly,
+				props.network.serverOptions.supportsAwayNotify
+			)
+		);
+
 		return {
 			filteredUsers,
 			groupedUsers,
@@ -379,6 +394,7 @@ export default defineComponent({
 			activeUser,
 			userlist,
 			getGroupSlug,
+			showStatusIndicators,
 			setUserSearchInput,
 			getModeClass,
 			selectUser,

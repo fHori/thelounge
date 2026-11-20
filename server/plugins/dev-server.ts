@@ -1,47 +1,26 @@
-import webpackDevMiddleware from "webpack-dev-middleware";
-import webpackHotMiddleware from "webpack-hot-middleware";
+import {createServer as createViteServer} from "vite";
 import express from "express";
+import fs from "fs";
 
 import log from "../log.js";
+import fromRoot from "../rootpath.js";
+import {injectServerConfig} from "./html-config.js";
 
-import webpack from "webpack";
-import config from "../../webpack.config.mjs";
-
-export default (app: express.Application) => {
+export default async (app: express.Application) => {
 	log.debug("Starting server in development mode");
 
-	const webpackConfig = config(undefined, {mode: "production"});
+	const vite = await createViteServer({
+		configFile: fromRoot("vite.config.mts"),
+		server: {middlewareMode: true},
+		appType: "custom",
+	});
 
-	if (
-		!webpackConfig ||
-		!webpackConfig.plugins?.length ||
-		!webpackConfig.entry ||
-		!webpackConfig.entry["js/bundle.js"]
-	) {
-		throw new Error("No valid production webpack config found");
-	}
+	app.use(vite.middlewares);
 
-	webpackConfig.plugins.push(new webpack.HotModuleReplacementPlugin());
-	webpackConfig.entry["js/bundle.js"].push(
-		"webpack-hot-middleware/client?path=storage/__webpack_hmr"
-	);
-
-	const compiler = webpack(webpackConfig);
-
-	if (!compiler) {
-		throw new Error("Failed to create webpack compiler");
-	}
-
-	app.use(
-		webpackDevMiddleware(compiler, {
-			index: "/",
-			publicPath: webpackConfig.output?.publicPath,
-		})
-	).use(
-		// The two packages don't always agree on webpack's Compiler type,
-		// depending on their versions; this holds for all of them
-		webpackHotMiddleware(compiler as unknown as Parameters<typeof webpackHotMiddleware>[0], {
-			path: "/storage/__webpack_hmr",
-		})
-	);
+	app.get("/", async (req, res) => {
+		const rawHtml = fs.readFileSync(fromRoot("client", "index.html"), "utf-8");
+		const html = await vite.transformIndexHtml(req.url, rawHtml);
+		res.setHeader("Content-Type", "text/html");
+		res.send(injectServerConfig(html));
+	});
 };

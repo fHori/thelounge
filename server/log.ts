@@ -1,4 +1,4 @@
-import colors from "chalk";
+import colors from "./colors.js";
 import {read} from "read";
 import Config from "./config.js";
 

@@ -1,4 +1,4 @@
-import {expect, assert} from "chai";
+import {expect, assert} from "vitest";
 import {findLinks, findLinksWithSchema} from "../../shared/linkify.js";
 
 describe("findLinks", () => {

@@ -1,6 +1,6 @@
 import _ from "lodash";
 import log from "../../log.js";
-import colors from "chalk";
+import colors from "../../colors.js";
 import path from "path";
 import semver from "semver";
 import Helper from "../../helper.js";
@@ -148,7 +148,7 @@ function getEnabledPackages(packageJson: string) {
 		const json = JSON.parse(fs.readFileSync(packageJson, "utf-8"));
 		return Object.keys(json.dependencies);
 	} catch (e: unknown) {
-		log.error(`Failed to read packages/package.json: ${colors.red(e)}`);
+		log.error(`Failed to read packages/package.json: ${colors.red(String(e))}`);
 	}
 
 	return [];
@@ -218,7 +218,9 @@ async function loadPackage(packageName: string) {
 		// Handle both ESM (direct exports) and CommonJS (wrapped in .default) modules
 		packageFile = imported.default || imported;
 	} catch (e: unknown) {
-		log.error(`Package ${colors.bold(packageName)} could not be loaded: ${colors.red(e)}`);
+		log.error(
+			`Package ${colors.bold(packageName)} could not be loaded: ${colors.red(String(e))}`
+		);
 
 		if (e instanceof Error) {
 			log.debug(e.stack ? e.stack : e.message);

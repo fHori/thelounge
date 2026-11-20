@@ -27,6 +27,7 @@ yarn.lock
 .gitattributes
 .browserslistrc
 .dockerignore
+.node-version
 *.woff
 *.woff2
 

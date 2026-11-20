@@ -6,8 +6,12 @@
 		v-on="onHover ? {mouseenter: hover} : {}"
 		@click.prevent="openContextMenu"
 		@contextmenu.prevent="openContextMenu"
-		><slot>{{ displayNick }}</slot></span
-	>
+		><slot
+			><template v-if="html"><span class="nick" v-html="html"></span></template
+			><template v-else>{{ displayNick }}</template></slot
+		><span v-if="user.isBot" class="user-bot-indicator" title="Bot"> [bot]</span
+		><StatusIcon v-if="includeStatusIcon" :away="!!user.away" tooltip-dir="w" :online="true"
+	/></span>
 </template>
 
 <script lang="ts">
@@ -16,6 +20,7 @@ import {UserInMessage} from "../../shared/types/msg";
 import eventbus from "../js/eventbus";
 import colorClass from "../js/helpers/colorClass";
 import type {ClientChan, ClientNetwork} from "../js/types";
+import StatusIcon from "./StatusIcon.vue";
 import {useStore} from "../js/store";
 import {ChanState} from "../../shared/types/chan";
 
@@ -26,6 +31,9 @@ type UsernameUser = Partial<UserInMessage> & {
 
 export default defineComponent({
 	name: "Username",
+	components: {
+		StatusIcon,
+	},
 	props: {
 		user: {
 			// TODO: UserInMessage shouldn't be necessary here.
@@ -39,6 +47,8 @@ export default defineComponent({
 		},
 		channel: {type: Object as PropType<ClientChan>, required: false},
 		network: {type: Object as PropType<ClientNetwork>, required: false},
+		includeStatusIcon: Boolean,
+		html: String,
 	},
 	setup(props) {
 		const mode = computed(() => {
@@ -85,6 +95,7 @@ export default defineComponent({
 				lastMessage: Date.now(),
 				mode: "",
 				away: "",
+				isBot: false,
 			});
 		}
 

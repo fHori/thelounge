@@ -1,4 +1,4 @@
-import {expect} from "chai";
+import {expect} from "vitest";
 import {Socket} from "net";
 import Identification, {normalizeAddress} from "../../server/identification";
 

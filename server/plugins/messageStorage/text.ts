@@ -1,5 +1,4 @@
-/* eslint-disable @typescript-eslint/restrict-template-expressions */
-import fs from "fs/promises";
+import {mkdirSync, appendFileSync} from "fs";
 import path from "path";
 import filenamify from "filenamify";
 
@@ -19,6 +18,7 @@ class TextFileMessageStorage implements MessageStorage {
 		this.isEnabled = false;
 	}
 
+	// These work synchronously and are async only to match MessageStorage
 	// eslint-disable-next-line @typescript-eslint/require-await
 	async enable() {
 		this.isEnabled = true;
@@ -29,6 +29,7 @@ class TextFileMessageStorage implements MessageStorage {
 		this.isEnabled = false;
 	}
 
+	// eslint-disable-next-line @typescript-eslint/require-await
 	async index(network: Network, channel: Channel, msg: Message) {
 		if (!this.isEnabled) {
 			return;
@@ -40,11 +41,7 @@ class TextFileMessageStorage implements MessageStorage {
 			TextFileMessageStorage.getNetworkFolderName(network)
 		);
 
-		try {
-			await fs.mkdir(logPath, {recursive: true});
-		} catch (e) {
-			throw new Error(`Unable to create logs directory: ${e}`);
-		}
+		mkdirSync(logPath, {recursive: true});
 
 		let line = `[${msg.time.toISOString()}] `;
 
@@ -100,27 +97,29 @@ class TextFileMessageStorage implements MessageStorage {
 				return;
 		}
 
+		// Split draft/multiline messages into individual lines
+		if (line.includes("\n")) {
+			line = line.replaceAll("\n", `\n[${msg.time.toISOString()}] | `);
+		}
+
 		line += "\n";
 
-		try {
-			await fs.appendFile(
-				path.join(logPath, TextFileMessageStorage.getChannelFileName(channel)),
-				line
-			);
-		} catch (e) {
-			throw new Error(`Failed to write user log: ${e}`);
-		}
+		appendFileSync(
+			path.join(logPath, TextFileMessageStorage.getChannelFileName(channel)),
+			line
+		);
 	}
 
 	async deleteChannel() {
 		// Not implemented for text log files
 	}
 
-	getMessages() {
+	// eslint-disable-next-line @typescript-eslint/require-await
+	async getMessages(): Promise<Message[]> {
 		// Not implemented for text log files
 		// They do not contain enough data to fully re-create message objects
 		// Use sqlite storage instead
-		return Promise.resolve([]);
+		return [];
 	}
 
 	canProvideMessages() {

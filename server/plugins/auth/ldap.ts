@@ -1,5 +1,5 @@
 import {Client, InvalidCredentialsError, SearchOptions} from "ldapts";
-import colors from "chalk";
+import colors from "../../colors.js";
 
 import log from "../../log.js";
 import Config from "../../config.js";

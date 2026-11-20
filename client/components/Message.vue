@@ -19,6 +19,11 @@
 				: prettyMessage.from.nick)
 		"
 		:data-bridged="prettyMessage.from?.shoutbox"
+		:data-msgid="message.msgid"
+		@touchstart.passive="onTouchStart"
+		@touchend="onTouchEnd"
+		@touchmove="onTouchCancel"
+		@touchcancel="onTouchCancel"
 	>
 		<span
 			aria-hidden="true"
@@ -41,6 +46,12 @@
 		<template v-else-if="prettyMessage.type === 'action'">
 			<span class="from"><span class="only-copy">*&nbsp;</span></span>
 			<span class="content" dir="auto">
+				<ReplyContext
+					v-if="message.replyTo"
+					:message="message"
+					:parent-in-history="parentInHistory"
+					@scroll-to-parent="scrollToParent"
+				/>
 				<StatusmsgMarker :group="prettyMessage.statusmsgGroup" />
 				<Username
 					:user="prettyMessage.from"
@@ -80,6 +91,12 @@
 				</template>
 			</span>
 			<span class="content" dir="auto">
+				<ReplyContext
+					v-if="message.replyTo"
+					:message="message"
+					:parent-in-history="parentInHistory"
+					@scroll-to-parent="scrollToParent"
+				/>
 				<span
 					v-if="prettyMessage.showInActive"
 					aria-label="This message was shown in your active channel"
@@ -96,8 +113,8 @@
 					:channel="channel"
 				/>
 			</span>
-			<span class="actions">
-				<span v-if="canReply" class="reply-action">
+			<span :class="['actions', {'beside-msg-actions': canReply && message.msgid}]">
+				<span v-if="canQuoteReply" class="reply-action">
 					<button
 						type="button"
 						class="reply-button"
@@ -118,6 +135,11 @@
 				></i>
 			</span>
 		</template>
+		<div v-if="canReply && message.msgid" class="msg-actions">
+			<span class="tooltipped tooltipped-w tooltipped-no-touch" aria-label="Reply"
+				><button class="msg-action-reply" aria-label="Reply" @click.stop="startReply"
+			/></span>
+		</div>
 	</div>
 </template>
 
@@ -135,6 +157,11 @@
 	z-index: 1;
 	top: -5px;
 	right: 5px;
+}
+
+/* Leave room for the IRCv3 reply toolbar (.msg-actions) at the right edge */
+#chat .msg .actions.beside-msg-actions {
+	right: 40px;
 }
 
 #chat .msg:hover .actions,
@@ -168,7 +195,7 @@
 </style>
 
 <script lang="ts">
-import {computed, defineComponent, PropType} from "vue";
+import {computed, defineComponent, onBeforeUnmount, PropType} from "vue";
 import dayjs from "dayjs";
 
 import constants from "../js/constants";
@@ -177,12 +204,13 @@ import localetime from "../js/helpers/localetime";
 import Username from "./Username.vue";
 import LinkPreview from "./LinkPreview.vue";
 import ParsedMessage from "./ParsedMessage.vue";
+import ReplyContext from "./ReplyContext.vue";
 import MessageTypes from "./MessageTypes";
 import StatusmsgMarker from "./StatusmsgMarker.vue";
 
 import type {ClientChan, ClientMessage, ClientNetwork} from "../js/types";
-import {useStore} from "../js/store";
 import {MessageType} from "../../shared/types/msg";
+import {useStore} from "../js/store";
 import {parser as shoutboxParser} from "../js/helpers/shoutbox-bridge/parser";
 import {ChanType} from "../../shared/types/chan";
 
@@ -194,6 +222,7 @@ export default defineComponent({
 	name: "Message",
 	components: {
 		...MessageTypes,
+		ReplyContext,
 		StatusmsgMarker,
 	},
 	props: {
@@ -206,6 +235,8 @@ export default defineComponent({
 	},
 	setup(props) {
 		const store = useStore();
+		let longPressTimer: ReturnType<typeof setTimeout> | null = null;
+		let highlightTimer: ReturnType<typeof setTimeout> | null = null;
 
 		const timeFormat = computed(() => {
 			let format: keyof typeof constants.timeFormats;
@@ -231,6 +262,25 @@ export default defineComponent({
 			return "message-" + (props.message.type || "invalid"); // TODO: force existence of type in sharedmsg
 		});
 
+		const canReply = computed(() => {
+			if (!props.network.serverOptions.supportsReply) {
+				return false;
+			}
+
+			const t = props.message.type;
+			return (
+				t === MessageType.MESSAGE || t === MessageType.ACTION || t === MessageType.NOTICE
+			);
+		});
+
+		const parentInHistory = computed(() => {
+			if (!props.message.replyTo || !props.channel) {
+				return false;
+			}
+
+			return props.channel.messages.some((m) => m.msgid === props.message.replyTo);
+		});
+
 		const isAction = () => {
 			if (!props.message.type) {
 				return false;
@@ -253,7 +303,8 @@ export default defineComponent({
 			return shoutboxParser(props.message, props.network, props.channel);
 		});
 
-		const canReply = computed(() => {
+		// Quote-style reply button (fork setting), separate from IRCv3 +reply
+		const canQuoteReply = computed(() => {
 			if (store.state.settings.enableReplyToMessage === false) {
 				return false;
 			}
@@ -289,16 +340,99 @@ export default defineComponent({
 			eventbus.emit("message:reply", replyText);
 		};
 
+		const startReply = () => {
+			// prettyMessage: a bridged shoutbox message is addressed to the
+			// shoutbox user, not to the bridge bot that relayed it
+			eventbus.emit("reply:start", {
+				msgid: props.message.msgid,
+				nick: prettyMessage.value.from?.nick,
+				text: prettyMessage.value.text,
+			});
+		};
+
+		const scrollToParent = () => {
+			if (!props.message.replyTo) {
+				return;
+			}
+
+			const el = document.querySelector(
+				`.msg[data-msgid="${CSS.escape(props.message.replyTo)}"]`
+			);
+
+			if (el) {
+				const wasHighlighted = el.classList.contains("highlight");
+
+				el.scrollIntoView({block: "center", behavior: "smooth"});
+				el.classList.add("highlight");
+
+				if (highlightTimer !== null) {
+					clearTimeout(highlightTimer);
+				}
+
+				highlightTimer = setTimeout(() => {
+					highlightTimer = null;
+
+					// We don't want to reset e.g. pings/keyword matches
+					if (!wasHighlighted) {
+						el.classList.remove("highlight");
+					}
+				}, 2000);
+			}
+		};
+
+		const onTouchStart = () => {
+			if (props.message.msgid && canReply.value) {
+				longPressTimer = setTimeout(() => {
+					longPressTimer = null;
+					startReply();
+				}, 500);
+			}
+		};
+
+		const clearLongPress = () => {
+			if (longPressTimer !== null) {
+				clearTimeout(longPressTimer);
+				longPressTimer = null;
+			}
+		};
+
+		const onTouchEnd = (e: TouchEvent) => {
+			if (longPressTimer === null && props.message.msgid && canReply.value) {
+				e.preventDefault();
+			}
+
+			clearLongPress();
+		};
+
+		const onTouchCancel = () => {
+			clearLongPress();
+		};
+
+		onBeforeUnmount(() => {
+			clearLongPress();
+
+			if (highlightTimer !== null) {
+				clearTimeout(highlightTimer);
+			}
+		});
+
 		return {
 			timeFormat,
 			prettyMessage,
 			messageTime,
 			messageTimeLocale,
 			messageComponent,
-			isAction,
 			canReply,
+			parentInHistory,
+			isAction,
+			canQuoteReply,
 			messageActions,
 			replyToMessage,
+			startReply,
+			scrollToParent,
+			onTouchStart,
+			onTouchEnd,
+			onTouchCancel,
 		};
 	},
 });

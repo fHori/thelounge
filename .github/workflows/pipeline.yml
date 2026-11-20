@@ -97,7 +97,7 @@ jobs:
           NODE_ENV: production
 
       - name: Test (server and client)
-        run: yarn test:mocha
+        run: yarn test:vitest
 
       # The tests run through a TypeScript loader that papers over ESM import
       # mistakes; start the built server under plain Node, as the image does

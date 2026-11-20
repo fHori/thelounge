@@ -1,4 +1,4 @@
-import {expect, assert} from "chai";
+import {expect, assert} from "vitest";
 import constants from "../../../client/js/constants";
 
 describe("client-side constants", function () {

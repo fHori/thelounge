@@ -48,7 +48,6 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/public ./public
-COPY --from=build /app/client/index.html.tpl ./client/index.html.tpl
 COPY --from=build /app/index.js /app/package.json /app/.thelounge_home ./
 COPY LICENSE ./
 

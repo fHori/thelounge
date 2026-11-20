@@ -22,6 +22,10 @@ export type SharedServerOptions = {
 	CHANTYPES: string[];
 	PREFIX: SharedPrefix;
 	NETWORK: string;
+	supportsReply: boolean;
+	// IRCv3 away-notify: the server reports away changes as they happen
+	supportsAwayNotify: boolean;
+	MONITOR: number | null;
 };
 
 export type SharedNetworkStatus = {

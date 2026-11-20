@@ -28,16 +28,11 @@ export enum MessageType {
 	PLUGIN = "plugin",
 	WALLOPS = "wallops",
 	MASS_EVENT = "mass_event",
+	WARN = "warn",
+	NOTE = "note",
 }
 
-export type SharedUser = {
-	modes: string[];
-	// Users in the channel have only one mode assigned
-	mode: string;
-	away: string;
-	nick: string;
-	lastMessage: number;
-};
+import {SharedUser} from "./user";
 
 export type UserInMessage = Partial<SharedUser> & {
 	mode: string;
@@ -91,6 +86,7 @@ export interface MassEventSummary {
 export type SharedMsg = {
 	from?: UserInMessage;
 	id: number;
+	msgid?: string;
 	previews?: LinkPreview[];
 	text?: string;
 	type?: MessageType;
@@ -127,4 +123,9 @@ export type SharedMsg = {
 	statusmsgGroup?: string;
 	params?: string[];
 	massEventSummary?: MassEventSummary;
+
+	replyTo?: string;
+	replyToNick?: string;
+	replyToText?: string;
+	multiline?: boolean;
 };

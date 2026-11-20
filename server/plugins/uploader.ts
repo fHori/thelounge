@@ -1,6 +1,5 @@
 import Config from "../config.js";
 import busboy, {BusboyHeaders} from "@fastify/busboy";
-import {v4 as uuidv4} from "uuid";
 import path from "node:path";
 import fs from "node:fs";
 import {fileTypeFromBuffer} from "file-type";
@@ -44,7 +43,7 @@ const CLEANUP_INTERVAL = 60 * 60 * 1000; // 1 hour
 class Uploader {
 	constructor(socket: Socket) {
 		socket.on("upload:auth", () => {
-			const token = uuidv4();
+			const token = crypto.randomUUID();
 
 			socket.emit("upload:auth", token);
 

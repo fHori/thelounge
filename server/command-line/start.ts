@@ -1,5 +1,5 @@
 import log from "../log.js";
-import colors from "chalk";
+import colors from "../colors.js";
 import fs from "node:fs";
 import path from "node:path";
 import {Command} from "commander";

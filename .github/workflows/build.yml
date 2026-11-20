@@ -5,10 +5,23 @@ permissions:
 
 # Releases (versioned image tags and :latest) are cut by cut-release.yml; this
 # workflow checks pull requests and publishes master as :edge.
+#
+# Changes to documentation alone skip it: Markdown is not in the image
+# (.dockerignore) and no code reads it. docs.yml checks its formatting.
 on:
   push:
     branches: [master]
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - "LICENSE"
   pull_request:
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
+      - ".github/ISSUE_TEMPLATE/**"
+      - "LICENSE"
 
 # A new push to a pull request cancels its older, still running checks
 concurrency:

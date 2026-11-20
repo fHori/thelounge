@@ -36,7 +36,7 @@ function addColumnIfMissing(table: string, column: string, type: string): Migrat
 	};
 }
 
-// The version stock The Lounge 4.6 gave its msgid migration, see 1795000000000
+// The version stock The Lounge 4.6 gave its msgid migration
 const stockMsgidVersion = 1784073600000;
 
 // Search index over the text of `type = 'message'` rows, keyed by messages.id.
@@ -89,6 +89,19 @@ export const searchLimits = {
 type Rollback = {version: number; rollback_forbidden?: boolean; stmts: string[]};
 
 export const currentSchemaVersion = 1795000000000; // use `new Date().getTime()`
+
+// Schemas of other builds that `thelounge storage downgrade` can go back to by
+// name. Downgrading to one makes a database usable by that build again.
+export const namedSchemaVersions = {
+	// Stock The Lounge 4.5.x, e.g. the official thelounge/thelounge image
+	stock: 1780272000000,
+	// Stock The Lounge 4.6.x. Its message ids don't survive: this fork's
+	// versions sit above it, and going back past them drops the column.
+	"stock-4.6": 1784073600000,
+	// Stock The Lounge 4.4.x and tetrahydroc/thelounge (and images built from
+	// it, such as cmd430/docker-thelounge)
+	tetra: 1703322560448,
+} as const;
 
 // Desired schema, adapt to the newest version and add migrations to the array below
 const schema = [
@@ -162,6 +175,16 @@ export const migrations: Migration[] = [
 		],
 	},
 	{
+		// Stock The Lounge 4.6's msgid migration, under its own version, so a
+		// database that stock 4.6 has upgraded continues from here and can be
+		// rolled back to it. It checks first, like 1795000000000 below.
+		version: stockMsgidVersion,
+		stmts: [
+			addColumnIfMissing("messages", "msgid", "TEXT"),
+			"CREATE INDEX IF NOT EXISTS msgid_idx ON messages (msgid)",
+		],
+	},
+	{
 		// This fork's own version of the migration above, from before stock
 		// had it. It is kept so databases that already ran it see no gap, and
 		// does nothing on top of it.
@@ -184,19 +207,13 @@ export const migrations: Migration[] = [
 		],
 	},
 	{
-		// IRCv3 message ids. Stock The Lounge 4.6 added this as 1784073600000,
-		// which is below this fork's own versions: databases this fork had
-		// already upgraded would skip it. So it is done here instead, and
-		// checks first, as databases coming from stock 4.6 already have both
-		// the column and the index.
+		// IRCv3 message ids again, for databases this fork had already
+		// upgraded: 1784073600000 is below their version, so they skip it.
+		// Databases that ran 1784073600000 already have both.
 		version: 1795000000000,
 		stmts: [
 			addColumnIfMissing("messages", "msgid", "TEXT"),
 			"CREATE INDEX IF NOT EXISTS msgid_idx ON messages (msgid)",
-			// Stock 4.6 stored its own rollback for the column. The one below
-			// takes its place; with both, rolling back would drop it twice.
-			`DELETE FROM rollback_steps WHERE migration_id IN (SELECT id FROM migrations WHERE version = ${stockMsgidVersion})`,
-			`DELETE FROM migrations WHERE version = ${stockMsgidVersion}`,
 		],
 	},
 ];
@@ -224,11 +241,25 @@ export const rollbacks: Rollback[] = [
 		],
 	},
 	{
+		version: stockMsgidVersion,
+		stmts: ["DROP INDEX IF EXISTS msgid_idx", "ALTER TABLE messages DROP COLUMN msgid"],
+	},
+	{
+		// The versions from here on are this fork's, and they sit above stock
+		// 4.6's: its schema has the msgid column, this fork's older builds
+		// don't. 1795000000000's rollback drops the column for those builds,
+		// so going back past this one, to stock 4.6, adds it again (the ids
+		// themselves are gone). 1784073600000's rollback then drops it for
+		// anything older.
+		//
 		// The index is undone by 1780272000000's rollback above. Databases
 		// that ran this migration before that one existed have its old
 		// rollback steps stored, which do the same thing.
 		version: 1794816000000,
-		stmts: [],
+		stmts: [
+			"ALTER TABLE messages ADD COLUMN msgid TEXT",
+			"CREATE INDEX msgid_idx ON messages (msgid)",
+		],
 	},
 	{
 		version: 1794820000000,
@@ -290,6 +321,8 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 	// False while existing messages are still being added to the search
 	// index in the background. Search reads every message until then.
 	searchIndexReady = true;
+	// False once a downgrade has removed the index table (open stores only)
+	private hasSearchIndexTable = true;
 	private finishing = false;
 	private backfill: {
 		timer: NodeJS.Timeout | null;
@@ -337,6 +370,14 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		this.isEnabled = true;
 		this.startSearchIndexBuild();
 		this.loadHistoryClears();
+	}
+
+	private searchIndexTableExists(): boolean {
+		return (
+			this.database
+				.prepare("SELECT 1 FROM sqlite_master WHERE name = 'messages_fts'")
+				.get() !== undefined
+		);
 	}
 
 	private option(name: string): string | undefined {
@@ -518,6 +559,25 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		}
 	}
 
+	/**
+	 * Opens the user's existing database as it is, without migrating it
+	 * forward, for `thelounge storage downgrade`. Only the migration helpers
+	 * and close() may be used afterwards: no messages can be stored.
+	 */
+	async open_without_migrating() {
+		const sqlitePath = path.join(Config.getUserLogsPath(), `${this.userName}.sqlite3`);
+
+		try {
+			this.database = new Database(sqlitePath, {fileMustExist: true});
+			await this.run_pragmas();
+		} finally {
+			this.initDone.resolve();
+		}
+
+		// So that close() closes it again
+		this.isEnabled = true;
+	}
+
 	async setup_new_db() {
 		for (const stmt of schema) {
 			await this.serialize_run(stmt);
@@ -555,10 +615,10 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		return storedSchemaVersion;
 	}
 
-	async update_version_in_db() {
+	async update_version_in_db(version: number = currentSchemaVersion) {
 		return this.serialize_run(
 			"UPDATE options SET value = ? WHERE name = 'schema_version'",
-			currentSchemaVersion.toString()
+			version.toString()
 		);
 	}
 
@@ -616,6 +676,8 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		}
 
 		await this.serialize_run("COMMIT");
+
+		this.hasSearchIndexTable = this.searchIndexTableExists();
 
 		// On an open store, start indexing what the migration left to index.
 		// _enable() does it once it has prepared its statements.
@@ -709,7 +771,7 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 
 					// Same transaction, so the index can't get ahead of or
 					// fall behind the messages table
-					if (msg.searchText !== null) {
+					if (msg.searchText !== null && this.hasSearchIndexTable) {
 						this.ftsInsertStmt!.run(inserted.lastInsertRowid, msg.searchText);
 					}
 				}
@@ -772,16 +834,44 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		return result;
 	}
 
+	// Despite the name, removes the migrations *newer* than `version`, i.e. the
+	// ones that were just rolled back, together with their rollback steps
 	async delete_migrations_older_than(version: number) {
+		// ON DELETE CASCADE only fires with foreign_keys on, which isn't the
+		// case here, so the steps are removed explicitly
+		await this.serialize_run(
+			"delete from rollback_steps where migration_id in (select id from migrations where version > ?)",
+			version
+		);
 		return this.serialize_run("delete from migrations where migrations.version > ?", version);
 	}
 
 	async _downgrade_to(version: number) {
-		const _rollbacks = await this.fetch_rollbacks(version);
+		const dbVersion = await this.current_version();
 
-		if (_rollbacks.length === 0) {
+		if (dbVersion <= version) {
 			return version;
 		}
+
+		// For every version this build knows, its own rollback is used rather
+		// than the steps stored in the database: those were written by
+		// whichever build ran the migration and can be out of date, and a
+		// migration added later in between (stock 4.5's 1780272000000) has none
+		// stored at all in databases upgraded before it existed. The stored
+		// steps are still what undoes versions only a newer build knows.
+		const byVersion = new Map<number, Rollback>();
+
+		for (const stored of await this.fetch_rollbacks(version)) {
+			byVersion.set(stored.version, stored);
+		}
+
+		for (const own of rollbacks) {
+			if (own.version > version && own.version <= dbVersion) {
+				byVersion.set(own.version, own);
+			}
+		}
+
+		const _rollbacks = [...byVersion.values()].sort((a, b) => b.version - a.version);
 
 		const forbidden = _rollbacks.find((item) => item.rollback_forbidden);
 
@@ -796,15 +886,47 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		}
 
 		await this.delete_migrations_older_than(version);
-		await this.update_version_in_db();
+
+		// Record any migration up to `version` the database has no row for, so
+		// it looks like that build left it. Databases this fork upgraded before
+		// it took over stock 4.5's 1780272000000 are missing that one.
+		const recorded = new Set(
+			(await this.serialize_fetchall("select version from migrations")).map(
+				(row) => (row as Record<string, unknown>).version as number
+			)
+		);
+		await this.insert_rollbacks(
+			rollbacks.filter((r) => r.version <= version && !recorded.has(r.version))
+		);
+
+		// The schema is now the one of `version`, which is what an older build
+		// checks before it agrees to open the database
+		await this.update_version_in_db(version);
 
 		return version;
 	}
 
 	async downgrade_to(version: number) {
-		if (version <= 0) {
+		if (!migrations.some((m) => m.version === version)) {
 			throw Error(`${version} is not a valid version to downgrade to`);
 		}
+
+		const dbVersion = await this.current_version();
+
+		if (version > dbVersion) {
+			throw Error(`the database is at ${dbVersion}, which is already older than ${version}`);
+		}
+
+		// Store what's waiting under the schema it was written for
+		await this.flushBatch();
+
+		// A background search index build would carry on into tables that
+		// are about to go away
+		if (this.backfill?.timer) {
+			clearTimeout(this.backfill.timer);
+		}
+
+		this.backfill = null;
 
 		await this.serialize_run("BEGIN EXCLUSIVE TRANSACTION");
 
@@ -818,6 +940,12 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		}
 
 		await this.serialize_run("COMMIT");
+
+		// Older schemas have no search index; search reads every message
+		this.hasSearchIndexTable = this.searchIndexTableExists();
+		this.searchIndexReady =
+			this.hasSearchIndexTable && this.option("fts_backfill_next") === undefined;
+
 		return new_version;
 	}
 
@@ -827,8 +955,11 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 	}
 
 	async insert_rollback_since(version: number) {
-		const missing = newRollbacks(version);
+		await this.insert_rollbacks(newRollbacks(version));
+	}
 
+	// Records migrations as applied, with the steps that undo them
+	async insert_rollbacks(missing: Rollback[]) {
 		for (const rollback of missing) {
 			const migration = await this.serialize_get(
 				`insert into migrations

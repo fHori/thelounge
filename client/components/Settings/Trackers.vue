@@ -1,246 +1,244 @@
 <template>
 	<div id="tracker-settings">
-		<h2>
-			Trackers
-			<span
-				class="tooltipped tooltipped-n tooltipped-no-delay"
-				aria-label='Trackers give users a "Tracker Profile" link in their
-context menu. Changes here only apply to you.'
-			>
-				<button type="button" class="extra-help" />
-			</span>
-		</h2>
+		<SettingCard title="Trackers">
+			<div class="setting-card-intro">
+				Trackers give users a "Tracker Profile" link in their context menu. Changes here
+				only apply to you.
+			</div>
+		</SettingCard>
 
-		<template v-if="serverTrackers.length > 0">
-			<h3>From the server</h3>
-			<ul class="tracker-list">
-				<li v-for="item in serverTrackers" :key="item.key" class="tracker-item">
-					<div class="tracker-item-info">
-						<strong>{{ item.tracker.name }}</strong>
-						<span class="tracker-item-detail">{{ item.network.name }}</span>
-						<span v-if="item.entry?.hidden" class="tracker-item-detail">
-							Profile link hidden
-						</span>
-						<span v-else-if="item.entry?.profileUrl" class="tracker-item-detail">
-							Your link: {{ item.entry.profileUrl }}
-						</span>
-						<span v-else-if="item.tracker.profileUrl" class="tracker-item-detail">
-							{{ item.tracker.profileUrl }}
-						</span>
-						<span v-else class="tracker-item-detail">No profile link</span>
+		<SettingCard v-if="serverTrackers.length > 0" title="From the server">
+			<div v-for="item in serverTrackers" :key="item.key" class="setting-row">
+				<div class="setting-row-text">
+					<div class="setting-row-label">
+						{{ item.tracker.name }}
+						<span class="tracker-network">{{ item.network.name }}</span>
 					</div>
-					<div class="tracker-item-btn">
-						<button type="button" class="btn" @click="editOverride(item)">
-							Change link
-						</button>
-						<button
-							v-if="item.entry"
-							type="button"
-							class="btn"
-							@click="removeEntry(item.entry)"
-						>
-							Reset
-						</button>
-						<button v-else type="button" class="btn" @click="hide(item)">Hide</button>
+					<div v-if="item.entry?.hidden" class="setting-row-description">
+						Profile link hidden
 					</div>
-				</li>
-			</ul>
-		</template>
-
-		<h3>Your trackers</h3>
-		<p v-if="ownTrackers.length === 0" class="tracker-item-detail">
-			You have not added any trackers.
-		</p>
-		<ul v-else class="tracker-list">
-			<li v-for="entry in ownTrackers" :key="entry.network + entry.id" class="tracker-item">
-				<div class="tracker-item-info">
-					<strong>{{ entry.name ?? entry.id }}</strong>
-					<span class="tracker-item-detail">
-						{{ networkLabel(entry.network) }}
-						<template v-if="entry.channels">
-							· {{ entry.channels.join(", ") }}</template
-						>
-					</span>
-					<span v-if="entry.hidden" class="tracker-item-detail">
-						Hides the server's profile link
-					</span>
-					<span v-else-if="entry.profileUrl" class="tracker-item-detail">
-						{{ entry.profileUrl }}
-					</span>
-					<span v-else class="tracker-item-detail error">No usable profile address</span>
+					<div v-else-if="item.entry?.profileUrl" class="setting-row-description">
+						Your link: {{ item.entry.profileUrl }}
+					</div>
+					<div v-else-if="item.tracker.profileUrl" class="setting-row-description">
+						{{ item.tracker.profileUrl }}
+					</div>
+					<div v-else class="setting-row-description">No profile link</div>
 				</div>
-				<div class="tracker-item-btn">
-					<button v-if="!entry.hidden" type="button" class="btn" @click="editOwn(entry)">
+				<div class="tracker-row-btns">
+					<button type="button" class="btn btn-small" @click="editOverride(item)">
+						Change link
+					</button>
+					<button
+						v-if="item.entry"
+						type="button"
+						class="btn btn-small"
+						@click="removeEntry(item.entry)"
+					>
+						Reset
+					</button>
+					<button v-else type="button" class="btn btn-small" @click="hide(item)">
+						Hide
+					</button>
+				</div>
+			</div>
+		</SettingCard>
+
+		<SettingCard title="Your trackers">
+			<div v-if="ownTrackers.length === 0" class="setting-card-intro">
+				You have not added any trackers.
+			</div>
+			<div v-for="entry in ownTrackers" :key="entry.network + entry.id" class="setting-row">
+				<div class="setting-row-text">
+					<div class="setting-row-label">
+						{{ entry.name ?? entry.id }}
+						<span class="tracker-network">
+							{{ networkLabel(entry.network) }}
+							<template v-if="entry.channels">
+								· {{ entry.channels.join(", ") }}</template
+							>
+						</span>
+					</div>
+					<div v-if="entry.hidden" class="setting-row-description">
+						Hides the server's profile link
+					</div>
+					<div v-else-if="entry.profileUrl" class="setting-row-description">
+						{{ entry.profileUrl }}
+					</div>
+					<div v-else class="setting-row-description error">
+						No usable profile address
+					</div>
+				</div>
+				<div class="tracker-row-btns">
+					<button
+						v-if="!entry.hidden"
+						type="button"
+						class="btn btn-small"
+						@click="editOwn(entry)"
+					>
 						Edit
 					</button>
-					<button type="button" class="btn" @click="removeEntry(entry)">Remove</button>
+					<button type="button" class="btn btn-small" @click="removeEntry(entry)">
+						Remove
+					</button>
 				</div>
-			</li>
-		</ul>
+			</div>
+			<div v-if="!form" class="setting-action-row">
+				<button
+					type="button"
+					class="btn btn-small"
+					:disabled="networkHosts.length === 0"
+					@click="addNew"
+				>
+					Add a tracker
+				</button>
+			</div>
+		</SettingCard>
 
-		<div v-if="form" class="tracker-form" @keydown.enter.prevent="save">
-			<h3 v-if="form.mode === 'override'">Profile link for {{ form.name }}</h3>
-			<h3 v-else-if="form.mode === 'edit'">Edit tracker</h3>
-			<h3 v-else>Add a tracker</h3>
+		<SettingCard
+			v-if="form"
+			:title="
+				form.mode === 'override'
+					? 'Profile link for ' + form.name
+					: form.mode === 'edit'
+						? 'Edit tracker'
+						: 'Add a tracker'
+			"
+		>
+			<div class="tracker-form" @keydown.enter.prevent="save">
+				<template v-if="form.mode !== 'override'">
+					<label for="tracker-name" class="setting-row-text">
+						<div class="setting-row-label">Name</div>
+					</label>
+					<input
+						id="tracker-name"
+						v-model="form.name"
+						type="text"
+						class="input"
+						autocomplete="off"
+						:maxlength="limits.text"
+						placeholder="e.g. My Tracker"
+					/>
 
-			<template v-if="form.mode !== 'override'">
-				<label for="tracker-name" class="opt">Name</label>
+					<label for="tracker-network" class="setting-row-text">
+						<div class="setting-row-label">Network</div>
+					</label>
+					<select id="tracker-network" v-model="form.network" class="input">
+						<option v-if="!hostIsListed(form.network)" :value="form.network">
+							{{ form.network ? "A network you are not on" : "Choose a network" }}
+						</option>
+						<option v-for="host in networkHosts" :key="host.host" :value="host.host">
+							{{ host.label }}
+						</option>
+					</select>
+
+					<label for="tracker-channels" class="setting-row-text">
+						<div class="setting-row-label">Channels</div>
+						<div class="setting-row-description">Leave empty for the whole network</div>
+					</label>
+					<input
+						id="tracker-channels"
+						v-model="form.channels"
+						type="text"
+						class="input"
+						autocomplete="off"
+						placeholder="Comma-separated, e.g.: #tracker, #tracker-help"
+					/>
+				</template>
+
+				<label for="tracker-profile-url" class="setting-row-text">
+					<div class="setting-row-label">Profile address</div>
+					<div class="setting-row-description">
+						{nick} is replaced with the user's nick. Use {ident} instead where the
+						tracker's IRC server puts the user id in the ident.
+					</div>
+				</label>
 				<input
-					id="tracker-name"
-					v-model="form.name"
+					id="tracker-profile-url"
+					v-model="form.profileUrl"
+					type="url"
+					class="input"
+					autocomplete="off"
+					:maxlength="limits.url"
+					placeholder="https://tracker.example/users/{nick}"
+				/>
+
+				<label for="tracker-user-host" class="setting-row-text">
+					<div class="setting-row-label">Users' hostname</div>
+					<div class="setting-row-description">
+						Optional, only used with {ident}: what the hostname of the tracker's users
+						looks like, * for any text
+					</div>
+				</label>
+				<input
+					id="tracker-user-host"
+					v-model="form.userHost"
 					type="text"
 					class="input"
 					autocomplete="off"
 					:maxlength="limits.text"
-					placeholder="e.g. My Tracker"
+					placeholder="e.g. *.users.tracker.example"
 				/>
 
-				<label for="tracker-network" class="opt">Network</label>
-				<select id="tracker-network" v-model="form.network" class="input">
-					<option v-if="!hostIsListed(form.network)" :value="form.network">
-						{{ form.network ? "A network you are not on" : "Choose a network" }}
-					</option>
-					<option v-for="host in networkHosts" :key="host.host" :value="host.host">
-						{{ host.label }}
-					</option>
-				</select>
+				<div v-if="formError" class="error">{{ formError }}</div>
 
-				<label for="tracker-channels" class="opt">
-					Channels
-					<span
-						class="tooltipped tooltipped-n tooltipped-no-delay"
-						aria-label="Leave empty for the whole network."
-					>
-						<button type="button" class="extra-help" />
-					</span>
-				</label>
-				<input
-					id="tracker-channels"
-					v-model="form.channels"
-					type="text"
-					class="input"
-					autocomplete="off"
-					placeholder="Comma-separated, e.g.: #tracker, #tracker-help"
-				/>
-			</template>
-
-			<label for="tracker-profile-url" class="opt">
-				Profile address
-				<span
-					class="tooltipped tooltipped-n tooltipped-no-delay"
-					aria-label="{nick} is replaced with the user's nick. Use {ident} instead
-where the tracker's IRC server puts the user id in the ident."
-				>
-					<button type="button" class="extra-help" />
-				</span>
-			</label>
-			<input
-				id="tracker-profile-url"
-				v-model="form.profileUrl"
-				type="url"
-				class="input"
-				autocomplete="off"
-				:maxlength="limits.url"
-				placeholder="https://tracker.example/users/{nick}"
-			/>
-
-			<label for="tracker-user-host" class="opt">
-				Users' hostname
-				<span
-					class="tooltipped tooltipped-n tooltipped-no-delay"
-					aria-label="Optional, only used with {ident}: what the hostname of the
-tracker's users looks like, * for any text."
-				>
-					<button type="button" class="extra-help" />
-				</span>
-			</label>
-			<input
-				id="tracker-user-host"
-				v-model="form.userHost"
-				type="text"
-				class="input"
-				autocomplete="off"
-				:maxlength="limits.text"
-				placeholder="e.g. *.users.tracker.example"
-			/>
-
-			<div v-if="formError" class="error">{{ formError }}</div>
-
-			<div class="tracker-form-btn">
-				<button type="button" class="btn" @click="save">Save</button>
-				<button type="button" class="btn" @click="form = null">Cancel</button>
+				<div class="tracker-row-btns tracker-form-btns">
+					<button type="button" class="btn btn-small" @click="save">Save</button>
+					<button type="button" class="btn btn-small" @click="form = null">Cancel</button>
+				</div>
 			</div>
-		</div>
-		<button
-			v-else
-			type="button"
-			class="btn"
-			:disabled="networkHosts.length === 0"
-			@click="addNew"
-		>
-			Add a tracker
-		</button>
+		</SettingCard>
 	</div>
 </template>
 
 <style>
-#tracker-settings h3 {
-	font-size: 15px;
-	margin: 16px 0 6px;
-}
-
-#tracker-settings .tracker-list {
-	list-style: none;
-	padding: 0;
-	margin: 0 0 10px;
-}
-
-#tracker-settings .tracker-item {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-	padding: 8px 0;
-	font-size: 14px;
-	border-bottom: 1px solid var(--window-heading-color, #ddd);
-}
-
-#tracker-settings .tracker-item-info {
-	display: flex;
-	flex-direction: column;
-	flex: 1 1 220px;
-	min-width: 0;
-}
-
-#tracker-settings .tracker-item-detail {
+#tracker-settings .tracker-network {
+	font-weight: 400;
 	color: var(--body-color-muted);
-	overflow-wrap: anywhere;
+	margin-left: 6px;
 }
 
-#tracker-settings .tracker-item-btn,
-#tracker-settings .tracker-form-btn {
+#tracker-settings .setting-row-description {
+	overflow-wrap: break-word;
+	word-break: break-word;
+}
+
+#tracker-settings .tracker-row-btns {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 6px;
-	align-items: flex-start;
+	flex-shrink: 0;
 }
 
-#tracker-settings .tracker-item-btn .btn,
-#tracker-settings .tracker-form-btn .btn {
+#tracker-settings .tracker-row-btns .btn {
 	margin: 0;
 }
 
-#tracker-settings .tracker-form {
+/* Same separators as other label + input groups in settings cards */
+#tracker-settings .tracker-form > .input + .setting-row-text {
+	display: block;
+	border-top: 1px solid #f0f1f2;
+	border-top-color: color-mix(in srgb, var(--body-color) 6%, var(--window-bg-color));
+	padding-top: 12px;
 	margin-top: 10px;
 }
 
-#tracker-settings .tracker-form-btn {
-	margin-top: 10px;
+#tracker-settings .tracker-form-btns {
+	margin-top: 14px;
+}
+
+@media screen and (width <= 480px) {
+	#tracker-settings .setting-row {
+		flex-direction: column;
+		gap: 8px;
+	}
 }
 </style>
 
 <script lang="ts">
 import {computed, defineComponent, ref} from "vue";
 import {useStore} from "../../js/store";
+import SettingCard from "./SettingCard.vue";
 import type {ClientNetwork} from "../../js/types";
 import type {TrackerInfo} from "../../../shared/types/network";
 import {
@@ -279,6 +277,9 @@ const isEntry = (entry: UserTracker, network: string, id: string) =>
 
 export default defineComponent({
 	name: "TrackerSettings",
+	components: {
+		SettingCard,
+	},
 	setup() {
 		const store = useStore();
 		const limits = userTrackerLimits;

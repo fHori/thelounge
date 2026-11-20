@@ -2,7 +2,7 @@ import log from "../../../server/log.js";
 import ldapAuth, {escapeLdapFilter} from "../../../server/plugins/auth/ldap.js";
 import Config from "../../../server/config.js";
 import {Client as LdapClient} from "ldapts";
-import {expect} from "chai";
+import {expect} from "vitest";
 import TestUtil from "../../util.js";
 import ClientManager from "../../../server/clientManager.js";
 import sinon from "sinon";
@@ -42,7 +42,7 @@ describe("LDAP authentication plugin", function () {
 	let manager: ClientManager;
 	const client = true;
 
-	before(function () {
+	beforeAll(function () {
 		// Ensure defaults are in a consistent state before the test suite runs
 		Config.values.ldap.searchDN = {...defaultSearchDN};
 	});
@@ -204,6 +204,33 @@ describe("LDAP authentication plugin", function () {
 			expect(valid).to.equal(false);
 			expect(warningMessage).to.equal("LDAP Search did not find anything for: eve\n");
 			expect(warnLogStub.calledOnce).to.equal(true);
+		});
+
+		it("should reject filter-injection usernames (RFC 4515)", async function () {
+			let warningMessage = "";
+			sandbox
+				.stub(log, "warn")
+				.callsFake(TestUtil.sanitizeLog((str) => (warningMessage += str)));
+
+			const bindStub = sandbox.stub(LdapClient.prototype, "bind").resolves();
+			// Without escaping, "*" would be a presence wildcard matching johndoe;
+			// escaped as "\2a" it matches no uid, so the search finds nothing.
+			const searchStub = sandbox.stub(LdapClient.prototype, "search").resolves({
+				searchEntries: [],
+				searchReferences: [],
+			});
+			sandbox.stub(LdapClient.prototype, "unbind").resolves();
+
+			const valid = await runAuth(sandbox, manager, client, "*", correctPassword);
+
+			expect(valid).to.equal(false);
+			expect(searchStub.calledOnce).to.equal(true);
+			expect(searchStub.firstCall.args[1]?.filter).to.equal(
+				`(&(${primaryKey}=\\2a)(objectClass=person))`
+			);
+			expect(warningMessage).to.contain("LDAP Search did not find anything");
+			// Only the root bind happened, never a bind as the matched user
+			expect(bindStub.calledOnce).to.equal(true);
 		});
 	});
 });

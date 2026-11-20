@@ -1,4 +1,4 @@
-import {expect} from "chai";
+import {expect} from "vitest";
 import os from "os";
 import Helper from "../../server/helper.js";
 
@@ -28,24 +28,23 @@ describe("Helper", function () {
 			);
 		});
 
-		it("should keep every $ in the home directory", function () {
-			if (process.platform === "win32") {
-				this.skip();
-			}
+		it.skipIf(process.platform === "win32")(
+			"should keep every $ in the home directory",
+			function () {
+				const originalHome = process.env.HOME;
+				process.env.HOME = "/tmp/a$$b$&c$1";
 
-			const originalHome = process.env.HOME;
-			process.env.HOME = "/tmp/a$$b$&c$1";
-
-			try {
-				expect(Helper.expandHome("~/tmp")).to.equal("/tmp/a$$b$&c$1/tmp");
-			} finally {
-				if (originalHome === undefined) {
-					delete process.env.HOME;
-				} else {
-					process.env.HOME = originalHome;
+				try {
+					expect(Helper.expandHome("~/tmp")).to.equal("/tmp/a$$b$&c$1/tmp");
+				} finally {
+					if (originalHome === undefined) {
+						delete process.env.HOME;
+					} else {
+						process.env.HOME = originalHome;
+					}
 				}
 			}
-		});
+		);
 
 		it("should return an empty string when given an empty string", function () {
 			expect(Helper.expandHome("")).to.equal("");

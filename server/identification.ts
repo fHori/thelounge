@@ -1,6 +1,6 @@
 import fs from "fs";
 import net, {Socket} from "net";
-import colors from "chalk";
+import colors from "./colors.js";
 import Helper from "./helper.js";
 import Config from "./config.js";
 import log from "./log.js";

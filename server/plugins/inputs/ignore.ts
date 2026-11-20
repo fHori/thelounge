@@ -35,11 +35,7 @@ const input: PluginInputHandler = function (network, chan, cmd, args) {
 				return;
 			}
 
-			if (
-				network.ignoreList.some((entry) => {
-					return Helper.compareHostmask(entry, hostmask);
-				})
-			) {
+			if (network.isIgnoredUser(hostmask)) {
 				chan.pushMessage(
 					this,
 					new Msg({

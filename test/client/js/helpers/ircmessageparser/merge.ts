@@ -1,4 +1,4 @@
-import {expect} from "chai";
+import {expect} from "vitest";
 import merge, {
 	type MergedParts,
 	type Part,

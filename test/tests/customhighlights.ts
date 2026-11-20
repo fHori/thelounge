@@ -1,4 +1,4 @@
-import {expect} from "chai";
+import {expect} from "vitest";
 import log from "../../server/log.js";
 import Client, {type UserConfig} from "../../server/client.js";
 import ClientManager from "../../server/clientManager.js";

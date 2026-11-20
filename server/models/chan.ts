@@ -40,7 +40,8 @@ class Chan {
 	historyLoaded!: boolean;
 	pinned!: boolean;
 
-	userAway?: boolean;
+	isOnline?: boolean | null;
+	userAway!: string | null;
 	special?: SpecialChanType;
 	data?: unknown;
 	closed?: boolean;
@@ -63,7 +64,12 @@ class Chan {
 			muted: false,
 			pinned: false,
 			historyLoaded: false,
+			userAway: null,
 		});
+
+		if (this.type === ChanType.QUERY) {
+			this.isOnline = this.isOnline ?? null;
+		}
 	}
 
 	destroy() {
@@ -229,6 +235,8 @@ class Chan {
 			state: this.state,
 			pinned: this.pinned,
 
+			isOnline: this.isOnline,
+			userAway: this.userAway,
 			special: this.special,
 			data: this.data,
 			closed: this.closed,

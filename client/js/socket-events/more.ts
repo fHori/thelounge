@@ -3,7 +3,7 @@ import {nextTick} from "vue";
 import socket from "../socket";
 import {store} from "../store";
 import {prependMessages} from "../chan";
-import {MessageType} from "../../../shared/types/msg";
+import {extractInputHistory} from "../helpers/inputHistory";
 
 socket.on("more", async (data) => {
 	const channel = store.getters.findChannel(data.chan)?.channel;
@@ -13,13 +13,7 @@ socket.on("more", async (data) => {
 	}
 
 	channel.inputHistory = channel.inputHistory.concat(
-		data.messages
-			.filter((m) => m.self && m.text && m.type === MessageType.MESSAGE)
-			// TS is too stupid to see the guard in .filter(), so we monkey patch it
-			// to please the compiler
-			.map((m) => (m.text ? m.text : ""))
-			.reverse()
-			.slice(0, 100 - channel.inputHistory.length)
+		extractInputHistory(data.messages, 100 - channel.inputHistory.length)
 	);
 	const newest = data.messages[data.messages.length - 1];
 

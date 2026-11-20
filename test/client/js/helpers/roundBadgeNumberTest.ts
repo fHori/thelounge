@@ -1,4 +1,4 @@
-import {expect} from "chai";
+import {expect} from "vitest";
 import roundBadgeNumber from "../../../../client/js/helpers/roundBadgeNumber.js";
 
 describe("roundBadgeNumber helper", function () {

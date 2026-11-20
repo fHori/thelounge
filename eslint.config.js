@@ -199,10 +199,13 @@ export default [
 		},
 	},
 
-	// Test files - no special rules needed
+	// Test files: chai property assertions (`expect(x).to.be.true`) are
+	// expressions on purpose
 	{
 		files: ["test/**/*.ts"],
-		rules: {},
+		rules: {
+			"@typescript-eslint/no-unused-expressions": "off",
+		},
 	},
 
 	// Prettier must be last to override any conflicting rules

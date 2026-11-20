@@ -4,6 +4,7 @@ import {SharedNetworkChan} from "../../shared/types/network";
 import {SharedMsg, MessageType} from "../../shared/types/msg";
 import {ChanType} from "../../shared/types/chan";
 import {messageKey} from "../../shared/messageKey";
+import {extractInputHistory} from "./helpers/inputHistory";
 
 /**
  * Opts a message out of Vue's deep reactivity. Call this on every message
@@ -355,14 +356,7 @@ export function liveMessageLimit(channel: ClientChan, isActiveChannel: boolean):
 }
 
 export function toClientChan(shared: SharedNetworkChan): ClientChan {
-	const history: string[] = [""].concat(
-		shared.messages
-			.filter((m) => m.self && m.text && m.type === MessageType.MESSAGE)
-			// TS is too stupid to see the nil guard on filter... so we monkey patch it
-			.map((m): string => (m.text ? m.text : ""))
-			.reverse()
-			.slice(0, 99)
-	);
+	const history: string[] = [""].concat(extractInputHistory(shared.messages, 99));
 	// filter the unused vars
 	const {messages, ...props} = shared;
 	const channel: ClientChan = {
@@ -372,6 +366,7 @@ export function toClientChan(shared: SharedNetworkChan): ClientChan {
 		inputHistoryPosition: 0,
 		historyLoading: false,
 		scrolledToBottom: true,
+		typingNicks: [],
 		users: [],
 		usersOutdated: shared.type === ChanType.CHANNEL ? true : false,
 		// The server reads stored history when a channel is first opened.
@@ -379,6 +374,7 @@ export function toClientChan(shared: SharedNetworkChan): ClientChan {
 		moreHistoryAvailable:
 			!shared.historyLoaded || shared.totalMessages > shared.messages.length,
 		inputHistory: history,
+		replyingTo: null,
 		messages: sharedMsgToClientMsg(messages),
 		// Initialize groups for reactivity (will be populated by SPGROUPS)
 		groups: shared.groups || undefined,

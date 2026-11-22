@@ -18,6 +18,11 @@ const favicon = document.getElementById("favicon");
 const faviconNormal = favicon?.getAttribute("href") || "";
 const faviconAlerted = favicon?.dataset.other || "";
 
+// Safari, and every browser on iOS: see #chat .msg in style.css
+if (navigator.vendor === "Apple Computer, Inc.") {
+	document.documentElement.classList.add("webkit");
+}
+
 export const VueApp = createApp(App);
 
 VueApp.use(router);

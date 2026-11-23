@@ -170,12 +170,15 @@ export default class ThreadedSqliteMessageStorage implements MessageProvider {
 		open.add(this);
 
 		try {
-			this.isEnabled = await this.thread.call<boolean>(
+			const enabled = await this.thread.call<boolean>(
 				this.store,
 				"open",
 				this.userName,
 				Config.getUserLogsPath()
 			);
+
+			// Unless it was closed while opening
+			this.isEnabled = enabled && open.has(this);
 		} catch (err) {
 			this.isEnabled = false;
 			throw err;

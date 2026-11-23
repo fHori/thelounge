@@ -155,4 +155,21 @@ describe("SQLite message storage thread", function () {
 		expect(await store.getMessages(net, chan, () => 0)).to.deep.equal([]);
 		expect(await store.getMaxMessageId()).to.equal(0);
 	});
+
+	// As when the server stops right after a user was added
+	it("finishes opening a database that is closed and shut down meanwhile", async function () {
+		const late = new ThreadedSqliteMessageStorage("threadUser");
+		const opening = late.enable();
+		const closing = late.close();
+		await stopStorageThread();
+
+		await opening;
+		await closing;
+		expect(late.isEnabled).to.equal(false);
+
+		// Closed for real: nothing else holds the database
+		const db = new Database(dbPath);
+		db.pragma("journal_mode = DELETE");
+		db.close();
+	});
 });

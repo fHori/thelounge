@@ -19,27 +19,53 @@ export type StorageReply =
 	| {id: number; ok: true; value: unknown}
 	| {id: number; ok: false; error: {message: string; stack?: string}};
 
-const stores = new Map<number, SqliteMessageStorage>();
+type Store = {storage: SqliteMessageStorage; opened: Promise<boolean>};
 
-async function open(store: number, userName: string, logsPath: string) {
+const stores = new Map<number, Store>();
+const closing = new Set<Promise<void>>();
+
+function open(store: number, userName: string, logsPath: string) {
 	const storage = new SqliteMessageStorage(userName);
-	stores.set(store, storage);
-	await storage.enable(logsPath);
-	return storage.isEnabled;
+	const opened = storage.enable(logsPath).then(() => storage.isEnabled);
+	stores.set(store, {storage, opened});
+	return opened;
+}
+
+// A database still being opened is closed once it is open: closing it
+// before would do nothing and leave it open
+function closeStore({storage, opened}: Store): Promise<void> {
+	const done = opened.then(
+		() => storage.close(),
+		() => storage.close()
+	);
+
+	const forget = () => {
+		closing.delete(done);
+	};
+
+	closing.add(done);
+	done.then(forget, forget);
+	return done;
 }
 
 async function close(store: number) {
-	const storage = stores.get(store);
+	const entry = stores.get(store);
 	stores.delete(store);
-	await storage?.close();
+
+	if (entry) {
+		await closeStore(entry);
+	}
 }
 
 // Closes every database, storing what is still queued, before the server
-// exits
+// exits. Also waits for closes already under way.
 async function shutdown() {
-	const all = Array.from(stores.values());
+	for (const entry of stores.values()) {
+		void closeStore(entry);
+	}
+
 	stores.clear();
-	await Promise.allSettled(all.map((storage) => storage.close()));
+	await Promise.allSettled(Array.from(closing));
 }
 
 const methods = {
@@ -69,13 +95,13 @@ const methods = {
 };
 
 function get(store: number): SqliteMessageStorage {
-	const storage = stores.get(store);
+	const entry = stores.get(store);
 
-	if (!storage) {
+	if (!entry) {
 		throw new Error("This message storage is closed");
 	}
 
-	return storage;
+	return entry.storage;
 }
 
 // Every failure, also one thrown right away, ends up as a rejected promise

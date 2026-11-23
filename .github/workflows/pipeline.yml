@@ -45,6 +45,13 @@ on:
         description: Build without the layer cache, pulling the base image
         type: boolean
         default: false
+      commit:
+        description: >-
+          Commit the image reports (label, version string, sha- tag), when it
+          is not ref itself: a release builds the tested commit with the
+          version applied, which is the release commit's content
+        type: string
+        default: ""
     outputs:
       digest:
         description: Digest of the published multi-platform image
@@ -59,38 +66,55 @@ env:
   BASE_IMAGE: docker.io/library/node:22-bookworm-slim
 
 jobs:
-  test:
+  # Lint, type check and tests run as three jobs side by side, each on its own
+  # runner; they share nothing but the install. Every one of them has to pass
+  # before publish (and build.yml's CI check).
+  lint:
     if: inputs.run_tests
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.ref }}
           persist-credentials: false
 
-      # package.json pins yarn 4 via "packageManager"; corepack provides it.
-      # Before setup-node, which asks yarn where its cache is.
-      - name: Enable corepack
-        run: corepack enable
+      - uses: ./.github/actions/setup
 
-      # Caches yarn's download cache (.yarn/cache, see .yarnrc.yml), keyed on
-      # yarn.lock; the install still links node_modules but downloads nothing
-      - name: Setup Node.js
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      - name: ESLint, Prettier and Stylelint
+        run: yarn run-p --aggregate-output --continue-on-error lint:eslint lint:prettier lint:stylelint
+
+  types:
+    if: inputs.run_tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: 22.x
-          cache: yarn
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
 
-      - name: Install
-        run: yarn install --immutable
+      - uses: ./.github/actions/setup
 
-      # ESLint, Prettier, Stylelint and the TypeScript type check
-      - name: Lint
-        run: yarn lint
+      - name: TypeScript type check
+        run: yarn lint:types
 
+  test:
+    if: inputs.run_tests
+    runs-on: ubuntu-latest
+    env:
+      # The types job type checks everything; the webpack builds here skip
+      # their own fork-ts-checker pass
+      THELOUNGE_SKIP_TYPECHECK: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+
+      - uses: ./.github/actions/setup
+
+      # The production build (dist/ and public/), which the server tests and
+      # the start-up check below use; the test bundle is a separate,
+      # Node-targeted webpack build (test/public/testclient.cjs)
       - name: Build
         run: yarn build
         env:
@@ -142,7 +166,9 @@ jobs:
           echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
           platform=${{ matrix.platform }}
           echo "PLATFORM_PAIR=${platform//\//-}" >> "$GITHUB_ENV"
-          echo "GIT_COMMIT=$(git rev-parse HEAD)" >> "$GITHUB_ENV"
+          echo "GIT_COMMIT=${COMMIT:-$(git rev-parse HEAD)}" >> "$GITHUB_ENV"
+        env:
+          COMMIT: ${{ inputs.commit }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -183,10 +209,14 @@ jobs:
           context: .
           platforms: ${{ matrix.platform }}
           labels: ${{ steps.meta.outputs.labels }}
+          # THELOUNGE_SKIP_TYPECHECK: every image CI builds is of a commit that is
+          # type checked: in this call, by master's CI before a release, or
+          # released already (refresh)
           build-args: |
             BASE_IMAGE=${{ env.BASE_IMAGE }}@${{ env.BASE_DIGEST }}
             VERSION=${{ inputs.version }}
             GIT_COMMIT=${{ env.GIT_COMMIT }}
+            THELOUNGE_SKIP_TYPECHECK=1
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=${{ inputs.push }}
           # Build provenance and an SBOM, attached to pushed images only
           provenance: ${{ inputs.push && 'mode=max' || 'false' }}
@@ -213,13 +243,17 @@ jobs:
           retention-days: 1
 
   # Tags the amd64 + arm64 images as one, once the tests have passed too
-  # (or were not asked for: releases test before they tag).
+  # (or were not asked for). With build_images false it tags the digests an
+  # earlier call in the same run uploaded: cut-release.yml builds the images
+  # alongside the tests and publishes them only after it has tagged.
   publish:
-    needs: [test, image]
+    needs: [lint, types, test, image]
     if: >-
       !cancelled() && inputs.push && inputs.channel != 'none'
-      && needs.image.result == 'success'
-      && (needs.test.result == 'success' || needs.test.result == 'skipped')
+      && (needs.image.result == 'success' || (needs.image.result == 'skipped' && !inputs.build_images))
+      && !contains(fromJSON('["failure", "cancelled"]'), needs.lint.result)
+      && !contains(fromJSON('["failure", "cancelled"]'), needs.types.result)
+      && !contains(fromJSON('["failure", "cancelled"]'), needs.test.result)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -239,6 +273,7 @@ jobs:
           persist-credentials: false
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: inputs.commit == ''
         with:
           ref: ${{ inputs.ref }}
           path: built
@@ -252,9 +287,10 @@ jobs:
           LATEST: ${{ inputs.latest }}
           LINE_LATEST: ${{ inputs.line_latest }}
           EDGE: ${{ inputs.edge }}
+          COMMIT: ${{ inputs.commit }}
         run: |
           node scripts/release/version.mjs image-tags --image "ghcr.io/${GITHUB_REPOSITORY,,}" \
-            --channel "$CHANNEL" --version "$VERSION" --sha "$(git -C built rev-parse HEAD)" \
+            --channel "$CHANNEL" --version "$VERSION" --sha "${COMMIT:-$(git -C built rev-parse HEAD)}" \
             --latest "$LATEST" --line-latest "$LINE_LATEST" --edge "$EDGE"
 
       - name: Download digests

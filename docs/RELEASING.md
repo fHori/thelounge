@@ -1,8 +1,9 @@
 # Releasing
 
 Releases are cut by the **Release** workflow (`.github/workflows/cut-release.yml`).
-It tests the commit, bumps `package.json`, tags, builds and publishes the
-images, and creates the GitHub Release with notes. Nothing else creates
+It tests the commit and builds the images side by side, then bumps
+`package.json`, tags, publishes the images and creates the GitHub Release with
+notes. Tests that master's CI already passed on that commit are not run again. Nothing else creates
 versioned images. The version scheme and the image tag policy are defined in
 `scripts/release/version.mjs`.
 
@@ -64,7 +65,8 @@ Actions > Release > Run workflow, on `master`:
   the exact tag, never `:latest`, and the GitHub Release is marked as a
   pre-release. Running the workflow again without the box finalises it.
 - **dry_run**: run the tests, build both images and write the release notes
-  to the run summary, but push, tag and publish nothing. Use it first.
+  to the run summary, but push, tag and publish nothing. Use it first. A dry
+  run may also start from another branch, to try out changes to the workflow.
 
 ## Release notes
 

@@ -1,0 +1,23 @@
+name: Set up Node.js and install
+description: Node.js 22 with yarn's download cache, then yarn install
+
+runs:
+  using: composite
+  steps:
+    # package.json pins yarn 4 via "packageManager"; corepack provides it.
+    # Before setup-node, which asks yarn where its cache is.
+    - name: Enable corepack
+      shell: bash
+      run: corepack enable
+
+    # Caches yarn's download cache (.yarn/cache, see .yarnrc.yml), keyed on
+    # yarn.lock; the install still links node_modules but downloads nothing
+    - name: Setup Node.js
+      uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+      with:
+        node-version: 22.x
+        cache: yarn
+
+    - name: Install
+      shell: bash
+      run: yarn install --immutable

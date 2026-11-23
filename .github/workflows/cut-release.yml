@@ -1,4 +1,5 @@
-# Cuts a release: tests, version bump commit and tag, images, GitHub Release.
+# Cuts a release: tests and images (side by side), version bump commit and
+# tag, publishing the images, GitHub Release.
 # Run it from Actions > Release > Run workflow; see docs/RELEASING.md.
 # refresh.yml calls it weekly to cut a base-image refresh release.
 #
@@ -7,6 +8,14 @@
 # a personal repository, so that push uses the RELEASE_DEPLOY_KEY deploy key,
 # which the ruleset lets through. The images are built here, through the
 # reusable pipeline.yml; Build skips the release commit.
+#
+# The images are built from the tested commit with the version applied (the
+# Dockerfile does that, from VERSION), which is the release commit's content,
+# while the tests run. They report the release commit: plan names it before
+# it exists (scripts/release/release-commit.sh writes it the same way every
+# time) and tag writes it once the tests have passed. Nothing is tagged or
+# published before that. Tests already passed by master's CI on that exact
+# commit are not run again.
 name: Release
 
 on:
@@ -59,6 +68,16 @@ permissions:
 env:
   # Keep in step with pipeline.yml
   BASE_IMAGE: docker.io/library/node:22-bookworm-slim
+  # true: commit the version to package.json and tag that commit (pushed to
+  # the branch together with the tag). false: tag the tested commit as is;
+  # the image still reports the right version (build arg), but package.json
+  # in git keeps its old version. Use false if the deploy key
+  # (RELEASE_DEPLOY_KEY) is ever removed: master's ruleset would refuse the
+  # push.
+  COMMIT_BUMP: "true"
+  # The jobs of pipeline.yml that make up the tests, as build.yml's runs name
+  # them. A release skips its tests when all of them passed on its commit.
+  TEST_JOBS: "pipeline / lint,pipeline / types,pipeline / test"
 
 jobs:
   plan:
@@ -66,8 +85,12 @@ jobs:
     permissions:
       contents: read
       packages: read
+      actions: read # master's CI runs, to skip tests that already passed
     outputs:
       skip: ${{ steps.plan.outputs.skip }}
+      tested: ${{ steps.plan.outputs.tested }}
+      release_commit: ${{ steps.plan.outputs.release_commit }}
+      commit_date: ${{ steps.plan.outputs.commit_date }}
       version: ${{ steps.plan.outputs.version }}
       tag: ${{ steps.plan.outputs.tag }}
       prerelease: ${{ steps.plan.outputs.prerelease }}
@@ -103,6 +126,7 @@ jobs:
           BUMP: ${{ inputs.bump }}
           VERSION: ${{ inputs.version }}
           PRERELEASE: ${{ inputs.prerelease }}
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           set -euo pipefail
           S=scripts/release/version.mjs
@@ -140,9 +164,10 @@ jobs:
             out base_sha "$(git rev-list -n 1 "$newest")"
             out refresh_of "$newest"
           else
+            # A dry run may start from any branch, to try out workflow changes
             case $GITHUB_REF in
               refs/heads/master | refs/heads/release/*) ;;
-              *) echo "::error::Release from master, or from a release/* branch for a hotfix of an older line"; exit 1 ;;
+              *) [[ $DRY_RUN == true ]] || { echo "::error::Release from master, or from a release/* branch for a hotfix of an older line"; exit 1; } ;;
             esac
             node $S next --bump "$BUMP" --version "$VERSION" --prerelease "$PRERELEASE" | tee plan.txt
             tag=$(sed -n 's/^tag=//p' plan.txt)
@@ -153,6 +178,40 @@ jobs:
               out base_sha "$GITHUB_SHA"
             fi
           fi
+
+          base=$(sed -n 's/^base_sha=//p' "$GITHUB_OUTPUT" | tail -n 1)
+          version=$(sed -n 's/^version=//p' "$GITHUB_OUTPUT" | tail -n 1)
+          tag=$(sed -n 's/^tag=//p' "$GITHUB_OUTPUT" | tail -n 1)
+          exists=$(sed -n 's/^exists=//p' "$GITHUB_OUTPUT" | tail -n 1)
+
+          # The commit the release will be: written by the tag job, after
+          # the tests, exactly like this
+          if [[ $exists != true && $COMMIT_BUMP == true ]]; then
+            when=$(date +%s)
+            commit=$(scripts/release/release-commit.sh "$base" "$version" "$tag" "$when")
+            out commit_date "$when"
+          else
+            commit=$base
+          fi
+          out release_commit "$commit"
+
+          # master's CI (build.yml) runs every test job on each commit pushed
+          # to master. If all of them passed on this one, do not run them again.
+          tested=false
+          if [[ $exists != true && $REFRESH != true ]]; then
+            run=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/runs?head_sha=$base&event=push&status=success" \
+              -q '.workflow_runs[0].id // empty')
+            if [[ -n $run ]]; then
+              passed=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" \
+                -q '[.jobs[] | select(.conclusion == "success") | .name] as $ok
+                  | env.TEST_JOBS | split(",") | all(. as $j | $ok | any(. == $j))')
+              if [[ $passed == true ]]; then
+                tested=true
+                note "Tests skipped: they passed on ${base:0:7} in $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$run"
+              fi
+            fi
+          fi
+          out tested "$tested"
           out skip false
 
       - name: Summary
@@ -170,9 +229,14 @@ jobs:
             echo "Feature release: new features or a storage change since ${PREVIOUS:-the start}." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-  test:
+  # Tests and both images, side by side. The images are built from the tested
+  # commit with the version applied and report the planned release commit;
+  # they are pushed by digest only, untagged, until publish. A refresh
+  # rebuilds a released commit and skips the tests, as does a commit master's
+  # CI already tested (plan).
+  build:
     needs: plan
-    if: needs.plan.outputs.skip == 'false' && needs.plan.outputs.exists != 'true' && !inputs.refresh
+    if: needs.plan.outputs.skip == 'false'
     uses: ./.github/workflows/pipeline.yml
     permissions:
       contents: read
@@ -181,31 +245,33 @@ jobs:
       attestations: write
     with:
       ref: ${{ needs.plan.outputs.base_sha }}
-      run_tests: true
-      build_images: false
+      run_tests: ${{ needs.plan.outputs.exists != 'true' && needs.plan.outputs.tested != 'true' && inputs.refresh != true }}
+      build_images: true
+      push: ${{ !inputs.dry_run }}
+      channel: none
+      version: ${{ needs.plan.outputs.version }}
+      commit: ${{ needs.plan.outputs.release_commit }}
+      # `refresh` only exists when called from refresh.yml; when the workflow
+      # is started by hand it is empty, which a boolean input refuses
+      fresh: ${{ inputs.refresh == true }}
 
   tag:
-    needs: [plan, test]
+    needs: [plan, build]
     if: >-
       !cancelled() && needs.plan.result == 'success' && needs.plan.outputs.skip == 'false'
-      && (needs.test.result == 'success' || needs.test.result == 'skipped')
+      && needs.build.result == 'success'
     runs-on: ubuntu-latest
     permissions:
       contents: write
     outputs:
       ref: ${{ steps.tag.outputs.ref }}
     env:
-      # true: commit the version to package.json and tag that commit (pushed
-      # to the branch together with the tag). false: tag the tested commit as
-      # is; the image still reports the right version (build arg), but
-      # package.json in git keeps its old version. Use false if the deploy
-      # key (RELEASE_DEPLOY_KEY) is ever removed: master's ruleset would
-      # refuse the push.
-      COMMIT_BUMP: "true"
       TAG: ${{ needs.plan.outputs.tag }}
       VERSION: ${{ needs.plan.outputs.version }}
       EXISTS: ${{ needs.plan.outputs.exists }}
       BASE_SHA: ${{ needs.plan.outputs.base_sha }}
+      RELEASE_COMMIT: ${{ needs.plan.outputs.release_commit }}
+      COMMIT_DATE: ${{ needs.plan.outputs.commit_date }}
       REFRESH: ${{ inputs.refresh }}
       DRY_RUN: ${{ inputs.dry_run }}
 
@@ -230,22 +296,34 @@ jobs:
           # "Re-run failed jobs" after this job had already pushed
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
             echo "$TAG was pushed by an earlier attempt; using it"
+            git fetch -q origin "refs/tags/$TAG:refs/tags/$TAG"
+            tagged=$(git rev-parse "$TAG^{commit}")
+            if [[ $tagged != "$RELEASE_COMMIT" ]]; then
+              echo "::error::$TAG is $tagged, but the images were built as $RELEASE_COMMIT"
+              exit 1
+            fi
             echo "ref=refs/tags/$TAG" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          commit=$BASE_SHA
           if [[ $COMMIT_BUMP == true ]]; then
-            sed -i -E '0,/"version": "[^"]*"/s//"version": "'"$VERSION"'"/' package.json
-            grep -q "\"version\": \"$VERSION\"" package.json
-            git add package.json
-            git commit -m "Release $TAG"
+            # The commit plan named, which the images already report. The
+            # script comes from the workflow's commit: an older base (a
+            # refresh) may not have it.
+            git show "$GITHUB_SHA:scripts/release/release-commit.sh" > "$RUNNER_TEMP/release-commit.sh"
+            commit=$(bash "$RUNNER_TEMP/release-commit.sh" "$BASE_SHA" "$VERSION" "$TAG" "$COMMIT_DATE")
           fi
-          git tag -a "$TAG" -m "$TAG"
+          if [[ $commit != "$RELEASE_COMMIT" ]]; then
+            echo "::error::the release commit is $commit, but plan named $RELEASE_COMMIT"
+            exit 1
+          fi
+          git tag -a "$TAG" -m "$TAG" "$commit"
 
           if [[ $DRY_RUN == true ]]; then
-            git show --stat HEAD | tee -a "$GITHUB_STEP_SUMMARY"
+            git show --stat "$commit" | tee -a "$GITHUB_STEP_SUMMARY"
             echo "ref=$BASE_SHA" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -257,12 +335,13 @@ jobs:
           else
             # Branch and tag together or not at all. Fails if the branch
             # moved since the tested commit: dispatch the release again.
-            git push --atomic origin "HEAD:refs/heads/$GITHUB_REF_NAME" "refs/tags/$TAG"
+            git push --atomic origin "$commit:refs/heads/$GITHUB_REF_NAME" "refs/tags/$TAG"
           fi
           echo "ref=refs/tags/$TAG" >> "$GITHUB_OUTPUT"
 
-  images:
-    needs: [plan, tag]
+  # Tags the images build pushed, now that the git tag is out
+  publish:
+    needs: [plan, build, tag]
     if: ${{ !cancelled() && needs.tag.result == 'success' }}
     uses: ./.github/workflows/pipeline.yml
     permissions:
@@ -273,23 +352,25 @@ jobs:
     with:
       ref: ${{ needs.tag.outputs.ref }}
       run_tests: false
+      build_images: false
       push: ${{ !inputs.dry_run }}
       channel: ${{ needs.plan.outputs.prerelease == 'true' && 'prerelease' || 'release' }}
       version: ${{ needs.plan.outputs.version }}
+      commit: ${{ needs.plan.outputs.release_commit }}
       latest: ${{ needs.plan.outputs.latest == 'true' }}
       line_latest: ${{ needs.plan.outputs.line_latest == 'true' }}
       # The release commit becomes master's newest commit, and Build skips
       # it, so the release image is also edge. Not for a refresh or a
       # hotfix from a release/* branch, which are not master's newest code.
       edge: ${{ github.ref_name == github.event.repository.default_branch && inputs.refresh != true }}
-      # `refresh` only exists when called from refresh.yml; when the workflow
-      # is started by hand it is empty, which a boolean input refuses
-      fresh: ${{ inputs.refresh == true }}
 
   # Last, so a published release always has its images
   release:
-    needs: [plan, tag, images]
-    if: ${{ !cancelled() && needs.images.result == 'success' }}
+    needs: [plan, tag, publish]
+    # A dry run publishes nothing, but still writes the notes
+    if: >-
+      !cancelled() && (needs.publish.result == 'success'
+      || (inputs.dry_run && needs.tag.result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: write

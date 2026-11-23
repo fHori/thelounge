@@ -47,6 +47,10 @@ function getVersionCacheBust() {
 	return hash.substring(0, 10);
 }
 
+// CI type checks in a job of its own (yarn lint:types), so its builds set
+// THELOUNGE_SKIP_TYPECHECK and leave this pass out
+const skipTypeCheck = Boolean(process.env.THELOUNGE_SKIP_TYPECHECK);
+
 const createForkTsCheckerPlugin = (withBuild) =>
 	new ForkTsCheckerWebpackPlugin({
 		typescript: {
@@ -195,7 +199,7 @@ function createBaseConfig(mode, isProduction) {
 			json3: "JSON",
 		},
 		plugins: [
-			createForkTsCheckerPlugin(true),
+			...(skipTypeCheck ? [] : [createForkTsCheckerPlugin(true)]),
 			new VueLoaderPlugin(),
 			new DefinePlugin({
 				__VUE_PROD_DEVTOOLS__: false,
@@ -260,7 +264,7 @@ function applyDevelopmentOverrides(config) {
 		splitChunks: false,
 	};
 	devConfig.plugins = [
-		createForkTsCheckerPlugin(false),
+		...(skipTypeCheck ? [] : [createForkTsCheckerPlugin(false)]),
 		new VueLoaderPlugin(),
 		createMiniCssExtractPlugin(),
 		new CopyPlugin({patterns: copyPatterns(false)}),

@@ -17,7 +17,7 @@
     "coverage": "run-s test:mocha test:nospec && nyc --nycrc-path=test/.nycrc-report.json report",
     "dev": "cross-env NODE_ENV=development tsx server/index.ts start --dev",
     "format:prettier": "prettier --write \"**/*.*\"",
-    "lint:eslint": "eslint . --report-unused-disable-directives --color",
+    "lint:eslint": "eslint . --report-unused-disable-directives --color --concurrency=auto",
     "lint:prettier": "prettier --list-different \"**/*.*\"",
     "lint:stylelint": "stylelint --color \"client/**/*.css\"",
     "lint:types": "tsc -p client --noEmit && tsc -p server --noEmit && tsc -p shared --noEmit && tsc -p test --noEmit",

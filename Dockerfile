@@ -27,11 +27,13 @@ COPY . .
 # dependency layers above.
 ARG VERSION=""
 ARG GIT_COMMIT=""
+# CI sets this: its tests type check the same commit
+ARG THELOUNGE_SKIP_TYPECHECK=""
 RUN if [ -n "$VERSION" ]; then \
 		sed -i -E '0,/"version": "[^"]*"/s//"version": "'"$VERSION"'"/' package.json \
 		&& grep -q '"version": "'"$VERSION"'"' package.json; \
 	fi \
-	&& NODE_ENV=production THELOUNGE_BUILD_COMMIT="$GIT_COMMIT" yarn build
+	&& NODE_ENV=production THELOUNGE_BUILD_COMMIT="$GIT_COMMIT" THELOUNGE_SKIP_TYPECHECK="$THELOUNGE_SKIP_TYPECHECK" yarn build
 
 # Runtime dependencies for the target platform (better-sqlite3 is native).
 FROM base AS deps

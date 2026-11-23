@@ -197,6 +197,69 @@ describe("release notes", function () {
 		expect(body).not.to.include("[!WARNING]");
 	});
 
+	it("groups squash merges by the branch of their pull request", function () {
+		const body = N.render({
+			version: "2026.11.5",
+			image: "img",
+			storageChanged: false,
+			repository: "fHori/thelounge",
+			commits: [
+				{
+					subject: "Storage: run SQLite on its own thread (#96)",
+					body: "",
+					pull: {number: 96, branch: "perf/sqlite-worker", own: true},
+				},
+				{
+					subject: "Tracker avatars (#90)",
+					body: "",
+					pull: {number: 90, branch: "feat/tracker-avatars", own: false},
+				},
+				{subject: "Fix a thing (#5013)", body: ""},
+			],
+		});
+		expect(body).to.include(
+			"## Features\n\n- Tracker avatars\n\n## Performance\n\n- Storage: run SQLite on its own thread ([#96](https://github.com/fHori/thelounge/pull/96))\n"
+		);
+		expect(body).to.include("## Other changes\n\n- Fix a thing\n");
+	});
+
+	it("picks the pull request a squash merge came from", function () {
+		const sha = "f34a58263f728a5d05072dfc511b8bd1fae4b375";
+		const pull = (number: number, mergeSha: string, base: string, head: string) => ({
+			number,
+			merge_commit_sha: mergeSha,
+			base: {repo: {full_name: base}},
+			head: {ref: "perf/x", repo: {full_name: head}},
+		});
+
+		expect(
+			N.pickPullRequest(
+				[
+					pull(95, "other", "fHori/thelounge", "fHori/thelounge"),
+					pull(96, sha, "fHori/thelounge", "fHori/thelounge"),
+				],
+				sha,
+				"fHori/thelounge"
+			)
+		).to.deep.equal({number: 96, branch: "perf/x", own: true});
+		expect(
+			N.pickPullRequest(
+				[pull(96, sha, "fHori/thelounge", "someone/thelounge")],
+				sha,
+				"fHori/thelounge"
+			)
+		).to.deep.equal({number: 96, branch: "perf/x", own: false});
+		// Merged somewhere else as this commit, e.g. upstream
+		expect(
+			N.pickPullRequest(
+				[pull(5013, sha, "thelounge/thelounge", "x/thelounge")],
+				sha,
+				"fHori/thelounge"
+			)
+		).to.equal(null);
+		expect(N.pickPullRequest({message: "Not Found"}, sha, "fHori/thelounge")).to.equal(null);
+	});
+
 	it("reads the schema version that decides the storage warning", function () {
 		expect(
 			N.schemaVersion("export const currentSchemaVersion = 1794820000000; // note")

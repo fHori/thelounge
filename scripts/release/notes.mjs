@@ -36,7 +36,14 @@ export function schemaVersion(source) {
 // Turn one first-parent commit into {group, title, pr}, or null to skip it.
 // `pr` is set for pull requests merged from this repository's own branches:
 // their number is one of ours. Pull requests from other forks are not linked.
-export function classify({subject, body}, repository = SCHEME.repository) {
+// `pull` is the pull request GitHub says a squash merge came from, see
+// lookUpPullRequest(): its branch groups it, as a merge commit's does.
+/**
+ * @typedef {{number: number, branch: string, own: boolean}} PullRequest
+ * @param {{subject: string, body: string, pull?: PullRequest | null}} commit
+ * @param {string} [repository]
+ */
+export function classify({subject, body, pull}, repository = SCHEME.repository) {
 	let branch = "";
 	let title = subject;
 	let pr = null;
@@ -56,6 +63,10 @@ export function classify({subject, body}, repository = SCHEME.repository) {
 		return null; // syncing merges carry no change of their own
 	} else if (/^Release v\d/.test(subject)) {
 		return null; // the release workflow's version bump commits
+	} else if (pull) {
+		branch = pull.branch;
+		title = subject.replace(/\s*\(#\d+\)$/, "");
+		pr = pull.own ? pull.number : null;
 	} else {
 		// A squash merge or direct commit. Drop a trailing "(#N)": in history
 		// brought in from elsewhere it names another repository's PR.
@@ -144,16 +155,67 @@ function git(...a) {
 	return execFileSync("git", a, {encoding: "utf8", maxBuffer: 64 * 1024 * 1024});
 }
 
-export function readCommits(from, to) {
+// A squash merge's subject ends in the pull request's number
+const SQUASHED = /\(#\d+\)$/;
+
+export function readCommits(from, to, lookUp = lookUpPullRequest) {
 	const range = from ? `${from}..${to}` : to;
-	return git("log", "--first-parent", "--format=%s%x1f%b%x1e", range)
+	return git("log", "--first-parent", "--format=%H%x1f%s%x1f%b%x1e", range)
 		.split("\x1e")
 		.map((r) => r.replace(/^\n/, ""))
 		.filter((r) => r.trim())
 		.map((r) => {
-			const [subject, body = ""] = r.split("\x1f");
-			return {subject, body};
+			const [sha, subject, body = ""] = r.split("\x1f");
+			const pull = SQUASHED.test(subject) ? lookUp(sha) : null;
+			return pull ? {subject, body, pull} : {subject, body};
 		});
+}
+
+let lookUpFailed = false;
+
+/**
+ * The pull request a squash merge came from, as {number, branch, own}: git
+ * keeps no branch name for it, GitHub does. Null when the commit isn't a pull
+ * request merged here, or GitHub can't be asked (no gh, no token); then the
+ * commit is grouped by its subject alone.
+ */
+export function lookUpPullRequest(sha, repository = SCHEME.repository) {
+	if (lookUpFailed) {
+		return null;
+	}
+
+	try {
+		const out = execFileSync("gh", ["api", `repos/${repository}/commits/${sha}/pulls`], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+		return pickPullRequest(JSON.parse(out), sha, repository);
+	} catch (err) {
+		lookUpFailed = true;
+		process.stderr.write(
+			`Could not look up pull requests (${(err instanceof Error ? err.message : String(err)).split("\n")[0]}); squash merges are grouped by their subject\n`
+		);
+		return null;
+	}
+}
+
+// Of the pull requests GitHub lists for a commit, the one merged into this
+// repository as that very commit
+export function pickPullRequest(pulls, sha, repository = SCHEME.repository) {
+	const repo = repository.toLowerCase();
+	const pull = (Array.isArray(pulls) ? pulls : []).find(
+		(p) => p.merge_commit_sha === sha && p.base?.repo?.full_name?.toLowerCase() === repo
+	);
+
+	if (!pull) {
+		return null;
+	}
+
+	return {
+		number: pull.number,
+		branch: pull.head.ref,
+		own: pull.head.repo?.full_name?.toLowerCase() === repo,
+	};
 }
 
 function schemaAt(ref) {

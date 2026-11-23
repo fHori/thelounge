@@ -84,6 +84,10 @@ first part:
 | Dependencies | `dependabot/`, `deps/`                                   |
 | Maintenance  | `chore/`, `ci/`, `build/`, `refactor/`, `docs/`, `test/` |
 
+A squash merge keeps no branch name in git, so the notes ask GitHub which pull
+request it came from (with `gh`, and a token). Without one they fall back to
+the commit subject, and squash merges land under "Other changes".
+
 Anything else lands under "Other changes". Each line links to its pull
 request, as long as it was merged from a branch of this repository. So the way to get good notes is to
 name branches with one of these prefixes and give pull requests a title that

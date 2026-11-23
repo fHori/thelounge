@@ -442,7 +442,7 @@ describe("SQLite background search index", function () {
 				text: "a brand new line",
 			})
 		);
-		await store.deleteChannel({uuid: "net"} as Network, {name: "#first"} as Channel);
+		await store.deleteChannel({uuid: "net"}, {name: "#first"});
 		await store.finishSearchIndex();
 
 		const left = store.database

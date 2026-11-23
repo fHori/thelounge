@@ -35,3 +35,35 @@ type SearchFunction = (query: SearchQuery) => Promise<SearchResponse>;
 export interface SearchableMessageStorage extends MessageStorage {
 	search: SearchFunction;
 }
+
+/**
+ * The storage the server reads history from and searches: SQLite, run on its
+ * own thread (see sqliteThread.ts).
+ */
+export interface MessageProvider extends SearchableMessageStorage {
+	getMaxMessageId(): Promise<number>;
+
+	getMessagesBefore(
+		networkUuid: string,
+		channelName: string,
+		beforeTime: number,
+		limit: number,
+		inclusive?: boolean
+	): Promise<Message[]>;
+
+	getMessagesAround(
+		networkUuid: string,
+		channelName: string,
+		targetTime: number,
+		limit?: number
+	): Promise<{messages: Message[]; hasMoreBefore: boolean; hasMoreAfter: boolean}>;
+
+	getMessagesAfter(
+		networkUuid: string,
+		channelName: string,
+		afterTime: number,
+		limit: number
+	): Promise<Message[]>;
+
+	deleteMessages(req: DeletionRequest): Promise<number>;
+}

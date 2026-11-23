@@ -216,7 +216,8 @@ type HistoryClear = {network: string; channel: string; upto: number};
 
 const clearKey = (network: string, channel: string) => `${network}\n${channel}`;
 
-type BatchedMessage = {
+// A message as it is stored, see toStoredRow()
+export type StoredRow = {
 	network: string;
 	channel: string;
 	time: number;
@@ -226,6 +227,34 @@ type BatchedMessage = {
 	searchText: string | null;
 };
 
+/**
+ * The row a message is stored as. Kept apart from storing it so the server
+ * can do this while it still holds the message, and hand the storage thread
+ * nothing but plain data.
+ */
+export function toStoredRow(networkUuid: string, channelName: string, msg: Msg): StoredRow {
+	const clonedMsg = Object.keys(msg).reduce((newMsg, prop) => {
+		// previews are not stored because storage is cleared on lounge restart
+		// type and time are stored in a separate column
+		// id IS now stored so it can be retrieved consistently
+		if (prop !== "previews" && prop !== "type" && prop !== "time") {
+			newMsg[prop] = msg[prop];
+		}
+
+		return newMsg;
+	}, {});
+
+	return {
+		network: networkUuid,
+		channel: channelName.toLowerCase(),
+		time: msg.time.getTime(),
+		type: msg.type,
+		msg: JSON.stringify(clonedMsg),
+		searchText:
+			msg.type === MessageType.MESSAGE && typeof msg.text === "string" ? msg.text : null,
+	};
+}
+
 class SqliteMessageStorage implements SearchableMessageStorage {
 	isEnabled: boolean;
 	database!: Database.Database;
@@ -233,7 +262,7 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 	userName: string;
 
 	// Message batching for improved write performance
-	private batchQueue: BatchedMessage[] = [];
+	private batchQueue: StoredRow[] = [];
 	private batchSize = 50; // Flush after 50 messages
 	private batchTimeout = 1000; // Flush after 1 second
 	private batchTimer: NodeJS.Timeout | null = null;
@@ -454,8 +483,8 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		}
 	}
 
-	async enable() {
-		const logsPath = Config.getUserLogsPath();
+	// The storage thread passes the folder, as it doesn't load the config
+	async enable(logsPath = Config.getUserLogsPath()) {
 		const sqlitePath = path.join(logsPath, `${this.userName}.sqlite3`);
 
 		try {
@@ -649,7 +678,7 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 
 		try {
 			// Use transaction for batch insert (much faster than individual inserts)
-			const transaction = this.database.transaction((msgs: BatchedMessage[]) => {
+			const transaction = this.database.transaction((msgs: StoredRow[]) => {
 				for (const msg of msgs) {
 					const inserted = this.insertStmt!.run(
 						msg.network,
@@ -808,33 +837,22 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 	}
 
 	async index(network: Network, channel: Chan, msg: Msg) {
+		return this.indexRow(toStoredRow(network.uuid, channel.name, msg));
+	}
+
+	/**
+	 * Stores a message already turned into its row by toStoredRow(), which is
+	 * how the storage thread gets them.
+	 */
+	async indexRow(row: StoredRow) {
 		await this.initDone.promise;
 
 		if (!this.isEnabled) {
 			return;
 		}
 
-		const clonedMsg = Object.keys(msg).reduce((newMsg, prop) => {
-			// previews are not stored because storage is cleared on lounge restart
-			// type and time are stored in a separate column
-			// id IS now stored so it can be retrieved consistently
-			if (prop !== "previews" && prop !== "type" && prop !== "time") {
-				newMsg[prop] = msg[prop];
-			}
-
-			return newMsg;
-		}, {});
-
 		// Add to batch queue instead of immediate insert
-		this.batchQueue.push({
-			network: network.uuid,
-			channel: channel.name.toLowerCase(),
-			time: msg.time.getTime(),
-			type: msg.type,
-			msg: JSON.stringify(clonedMsg),
-			searchText:
-				msg.type === MessageType.MESSAGE && typeof msg.text === "string" ? msg.text : null,
-		});
+		this.batchQueue.push(row);
 
 		// Flush batch if it reaches the size limit
 		if (this.batchQueue.length >= this.batchSize) {
@@ -845,7 +863,7 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		}
 	}
 
-	async deleteChannel(network: Network, channel: Channel) {
+	async deleteChannel(network: Pick<Network, "uuid">, channel: Pick<Channel, "name">) {
 		await this.initDone.promise;
 
 		if (!this.isEnabled) {
@@ -1061,46 +1079,48 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		channel: Channel,
 		ensureIdAbove: (maxId: number) => void
 	): Promise<Message[]> {
+		const messages = await this.getChannelHistory(
+			network.uuid,
+			channel.name,
+			historyLimit(Config.values.maxHistory)
+		);
+
+		// Ensure client.idMsg is higher than any loaded message ID
+		ensureIdAbove(maxMessageId(messages));
+
+		return messages;
+	}
+
+	/**
+	 * The newest `limit` messages of a channel, oldest first. What
+	 * getMessages() reads, for callers that work out the limit themselves.
+	 */
+	async getChannelHistory(
+		networkUuid: string,
+		channelName: string,
+		limit: number
+	): Promise<Message[]> {
 		await this.initDone.promise;
 
-		if (!this.isEnabled || Config.values.maxHistory === 0) {
+		if (!this.isEnabled || limit === 0) {
 			return [];
 		}
 
 		// Flush any pending batched writes before reading
 		await this.flushBatch();
 
-		// If unlimited history is specified, load 100k messages
-		const limit = Config.values.maxHistory < 0 ? 100000 : Config.values.maxHistory;
-
-		const hidden = this.hideCleared(network.uuid, channel.name);
+		const hidden = this.hideCleared(networkUuid, channelName);
 
 		// Select id from SQLite to use as the canonical message ID
 		const rows = await this.serialize_fetchall(
 			`SELECT id, msg, type, time FROM ${hidden.table} WHERE network = ? AND channel = ?${hidden.sql} ORDER BY time DESC, id DESC LIMIT ?`,
-			network.uuid,
-			channel.name.toLowerCase(),
+			networkUuid,
+			channelName.toLowerCase(),
 			...hidden.params,
 			limit
 		);
 
-		// Track max ID so we can update client.idMsg
-		let maxId = 0;
-
-		const messages = rows.reverse().map((row): Message => {
-			const newMsg = rowToMessage(row);
-
-			if (newMsg.id > maxId) {
-				maxId = newMsg.id;
-			}
-
-			return newMsg;
-		});
-
-		// Ensure client.idMsg is higher than any loaded message ID
-		ensureIdAbove(maxId);
-
-		return messages;
+		return rows.reverse().map(rowToMessage);
 	}
 
 	async search(query: SearchQuery): Promise<SearchResponse> {
@@ -1544,6 +1564,26 @@ function rowToMessage(row: unknown): Message {
 	}
 
 	return new Msg(msg);
+}
+
+/**
+ * How many messages of a channel's history are loaded for the `maxHistory`
+ * setting: none for 0, 100k when it's unlimited (negative).
+ */
+export function historyLimit(maxHistory: number): number {
+	return maxHistory < 0 ? 100000 : maxHistory;
+}
+
+export function maxMessageId(messages: Message[]): number {
+	let maxId = 0;
+
+	for (const msg of messages) {
+		if (msg.id > maxId) {
+			maxId = msg.id;
+		}
+	}
+
+	return maxId;
 }
 
 export function necessaryMigrations(since: number): Migration[] {

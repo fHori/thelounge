@@ -11,6 +11,7 @@ import net from "net";
 import log from "./log.js";
 import Client from "./client.js";
 import ClientManager from "./clientManager.js";
+import {stopStorageThread} from "./plugins/messageStorage/sqliteThread.js";
 import Uploader from "./plugins/uploader.js";
 import Helper from "./helper.js";
 import Config, {ConfigType} from "./config.js";
@@ -317,13 +318,20 @@ export default async function (
 					// Forcefully exit after 3 seconds
 					suicideTimeout = setTimeout(() => process.exit(1), 3000);
 
-					// Close http server
+					// Close http server, then the databases, which stores the
+					// messages they still have queued
 					server?.close(() => {
-						if (suicideTimeout !== null) {
-							clearTimeout(suicideTimeout);
-						}
+						stopStorageThread()
+							.catch((err: Error) => {
+								log.error(`Could not close message storage: ${err.message}`);
+							})
+							.finally(() => {
+								if (suicideTimeout !== null) {
+									clearTimeout(suicideTimeout);
+								}
 
-						process.exit(0);
+								process.exit(0);
+							});
 					});
 				};
 

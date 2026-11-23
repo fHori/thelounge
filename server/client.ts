@@ -17,7 +17,7 @@ import {SharedMention} from "../shared/types/mention.js";
 
 import inputs from "./plugins/inputs/index.js";
 import PublicClient from "./plugins/packages/publicClient.js";
-import SqliteMessageStorage from "./plugins/messageStorage/sqlite.js";
+import ThreadedSqliteMessageStorage from "./plugins/messageStorage/sqliteThread.js";
 import TextFileMessageStorage from "./plugins/messageStorage/text.js";
 import Network, {
 	NetworkConfig,
@@ -25,7 +25,7 @@ import Network, {
 	NetworkWithIrcFramework,
 } from "./models/network.js";
 import ClientManager from "./clientManager.js";
-import {MessageStorage} from "./plugins/messageStorage/types.js";
+import {MessageStorage, MessageProvider} from "./plugins/messageStorage/types.js";
 import {StorageCleaner} from "./storageCleaner.js";
 import {SearchQuery, SearchResponse} from "../shared/types/storage.js";
 import {SharedChan, ChanType} from "../shared/types/chan.js";
@@ -115,7 +115,9 @@ class Client {
 	messageStorage!: MessageStorage[];
 	highlightRegex!: RegExp | null;
 	highlightExceptionRegex!: RegExp | null;
-	messageProvider?: SqliteMessageStorage;
+	messageProvider?: MessageProvider;
+	// Settles once message ids are past the stored ones, see connect()
+	private storedIdsKnown?: Promise<void>;
 	massEventAggregator!: MassEventAggregator;
 	userIdentLookup = new UserIdentLookup();
 
@@ -156,7 +158,7 @@ class Client {
 
 		if (!Config.values.public && this.config.log) {
 			if (Config.values.messageStorage.includes("sqlite")) {
-				this.messageProvider = new SqliteMessageStorage(this.name);
+				this.messageProvider = new ThreadedSqliteMessageStorage(this.name);
 
 				if (Config.values.storagePolicy.enabled) {
 					log.info(
@@ -180,7 +182,7 @@ class Client {
 			// Message ids restart with the server while stored messages keep
 			// theirs. History is only read when a channel is opened, so move
 			// the counter past everything stored before the first new message.
-			this.messageProvider
+			this.storedIdsKnown = this.messageProvider
 				?.getMaxMessageId()
 				.then((maxId) => {
 					this.idMsg = Math.max(this.idMsg, maxId + 1);
@@ -234,16 +236,41 @@ class Client {
 			// Networks are created instantly, but to reduce server load on startup
 			// We randomize the IRC connections.
 			// Channel history is not read here, see Client.open()
-			let delay = this.manager.clients.length * 500;
-			this.networks.forEach((network) => {
-				setTimeout(() => {
-					if (!network.userDisconnected && network.irc) {
-						network.irc.connect();
-					}
-				}, delay);
+			const connectNetworks = () => {
+				let delay = this.manager.clients.length * 500;
+				this.networks.forEach((network) => {
+					setTimeout(() => {
+						if (!network.userDisconnected && network.irc) {
+							network.irc.connect();
+						}
+					}, delay);
 
-				delay += 1000 + Math.floor(Math.random() * 1000);
-			});
+					delay += 1000 + Math.floor(Math.random() * 1000);
+				});
+			};
+
+			// Storage answers from its own thread, a moment after start or
+			// longer on a slow disk. Until then message ids could repeat
+			// stored ones, so the networks wait for it, but not forever.
+			if (this.storedIdsKnown) {
+				let waited: NodeJS.Timeout | undefined;
+				void Promise.race([
+					this.storedIdsKnown,
+					new Promise<void>((resolve) => {
+						waited = setTimeout(() => {
+							log.warn(
+								`Message storage for ${this.name} is slow to start, connecting anyway`
+							);
+							resolve();
+						}, 10000);
+					}),
+				]).then(() => {
+					clearTimeout(waited);
+					connectNetworks();
+				});
+			} else {
+				connectNetworks();
+			}
 
 			this.fileHash = this.manager.getDataToSave(this).newHash;
 

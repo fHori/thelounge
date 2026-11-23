@@ -77,7 +77,7 @@ env:
   COMMIT_BUMP: "true"
   # The jobs of pipeline.yml that make up the tests, as build.yml's runs name
   # them. A release skips its tests when all of them passed on its commit.
-  TEST_JOBS: "pipeline / lint,pipeline / types,pipeline / test"
+  TEST_JOBS: "pipeline / eslint,pipeline / checks,pipeline / test"
 
 jobs:
   plan:

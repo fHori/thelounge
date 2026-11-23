@@ -66,10 +66,11 @@ env:
   BASE_IMAGE: docker.io/library/node:22-bookworm-slim
 
 jobs:
-  # Lint, type check and tests run as three jobs side by side, each on its own
-  # runner; they share nothing but the install. Every one of them has to pass
-  # before publish (and build.yml's CI check).
-  lint:
+  # ESLint, the other checks and the tests run as three jobs side by side, each
+  # on its own runner; they share nothing but the install. Every one of them
+  # has to pass before publish (and build.yml's CI check). cut-release.yml
+  # names them in TEST_JOBS.
+  eslint:
     if: inputs.run_tests
     runs-on: ubuntu-latest
     steps:
@@ -80,10 +81,11 @@ jobs:
 
       - uses: ./.github/actions/setup
 
-      - name: ESLint, Prettier and Stylelint
-        run: yarn run-p --aggregate-output --continue-on-error lint:eslint lint:prettier lint:stylelint
+      # The longest of the checks: a thread per core (auto takes half)
+      - name: ESLint
+        run: yarn lint:eslint --concurrency=4
 
-  types:
+  checks:
     if: inputs.run_tests
     runs-on: ubuntu-latest
     steps:
@@ -94,14 +96,14 @@ jobs:
 
       - uses: ./.github/actions/setup
 
-      - name: TypeScript type check
-        run: yarn lint:types
+      - name: Type check, Prettier and Stylelint
+        run: yarn run-p --aggregate-output --continue-on-error lint:types lint:prettier lint:stylelint
 
   test:
     if: inputs.run_tests
     runs-on: ubuntu-latest
     env:
-      # The types job type checks everything; the webpack builds here skip
+      # The checks job type checks everything; the webpack builds here skip
       # their own fork-ts-checker pass
       THELOUNGE_SKIP_TYPECHECK: "1"
     steps:
@@ -247,12 +249,12 @@ jobs:
   # earlier call in the same run uploaded: cut-release.yml builds the images
   # alongside the tests and publishes them only after it has tagged.
   publish:
-    needs: [lint, types, test, image]
+    needs: [eslint, checks, test, image]
     if: >-
       !cancelled() && inputs.push && inputs.channel != 'none'
       && (needs.image.result == 'success' || (needs.image.result == 'skipped' && !inputs.build_images))
-      && !contains(fromJSON('["failure", "cancelled"]'), needs.lint.result)
-      && !contains(fromJSON('["failure", "cancelled"]'), needs.types.result)
+      && !contains(fromJSON('["failure", "cancelled"]'), needs.eslint.result)
+      && !contains(fromJSON('["failure", "cancelled"]'), needs.checks.result)
       && !contains(fromJSON('["failure", "cancelled"]'), needs.test.result)
     runs-on: ubuntu-latest
     permissions:

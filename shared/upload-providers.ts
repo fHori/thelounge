@@ -1,8 +1,8 @@
 function uploadErrorMessage(body: string, status: number, host: string): string {
 	const text = (body ?? "").trim();
 
-	// Hosts behind a WAF/CDN or in maintenance answer with an HTML page; never show markup
-	if (!text || /^<(!doctype|html|head|body|meta)/i.test(text) || text.length > 200) {
+	// Hosts behind a WAF/CDN or in maintenance answer with an HTML page; never show markup (long plain text is truncated server-side)
+	if (!text || /^<(!doctype|html|head|body|meta)/i.test(text)) {
 		return `${host} rejected the upload (HTTP ${status}). The host may be down, blocking this request, or rate limiting you.`;
 	}
 

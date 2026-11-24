@@ -248,4 +248,14 @@ describe("Uploader", function () {
 		expect(response.status).to.equal(400);
 		expect(json.error).to.equal(`${"x".repeat(100)}...`);
 	});
+
+	it("should not pass HTML error pages from public providers through", async function () {
+		fetchStub.resolves(new Response("<!DOCTYPE HTML><HTML><META NAME=\"ROBOTS\">", {status: 403}));
+
+		const response = await upload("catbox", getUploadToken());
+		const json = await response.json();
+
+		expect(response.status).to.equal(400);
+		expect(json.error).to.match(/^Catbox rejected the upload \(HTTP 403\)/);
+	});
 });

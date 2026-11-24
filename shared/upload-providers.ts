@@ -1,3 +1,14 @@
+function uploadErrorMessage(body: string, status: number, host: string): string {
+	const text = (body ?? "").trim();
+
+	// Hosts behind a WAF/CDN or in maintenance answer with an HTML page; never show markup
+	if (!text || /^<(!doctype|html|head|body|meta)/i.test(text) || text.length > 200) {
+		return `${host} rejected the upload (HTTP ${status}). The host may be down, blocking this request, or rate limiting you.`;
+	}
+
+	return text;
+}
+
 export interface UploadProvider {
 	id: string;
 	displayName: string;
@@ -115,7 +126,7 @@ export const UploadProviders: UploadProvider[] = [
 			const url = <string>json.data?.url ?? "";
 
 			if (!url.startsWith("http")) {
-				throw new Error(url ?? "Unknown Error");
+				throw new Error(uploadErrorMessage(url, response.status, "ImageBB"));
 			}
 
 			return url;
@@ -166,7 +177,7 @@ export const UploadProviders: UploadProvider[] = [
 			const url = await response.text();
 
 			if (!response.ok || !url.startsWith("http")) {
-				throw new Error(url ?? "Unknown Error");
+				throw new Error(uploadErrorMessage(url, response.status, "Catbox"));
 			}
 
 			return url;
@@ -220,7 +231,7 @@ export const UploadProviders: UploadProvider[] = [
 			const url = await response.text();
 
 			if (!response.ok || !url.startsWith("http")) {
-				throw new Error(url ?? "Unknown Error");
+				throw new Error(uploadErrorMessage(url, response.status, "PTScreens"));
 			}
 
 			return url;
@@ -314,7 +325,7 @@ export const UploadProviders: UploadProvider[] = [
 			const url = <string>json?.files?.[0]?.url ?? "";
 
 			if (!url.startsWith("http")) {
-				throw new Error(url || "Unknown Error");
+				throw new Error(uploadErrorMessage(url, response.status, "Uguu"));
 			}
 
 			return url;
@@ -368,7 +379,7 @@ export const UploadProviders: UploadProvider[] = [
 			const url = await response.text();
 
 			if (!response.ok || !url.startsWith("http")) {
-				throw new Error(url ?? "Unknown Error");
+				throw new Error(uploadErrorMessage(url, response.status, "OnlyImage"));
 			}
 
 			return url;
@@ -587,7 +598,7 @@ export const UploadProviders: UploadProvider[] = [
 			const url = body.split("\n")[0].trim();
 
 			if (!url.startsWith("http")) {
-				throw new Error(url || "Unknown Error");
+				throw new Error(uploadErrorMessage(url, response.status, "rustypaste"));
 			}
 
 			return url;

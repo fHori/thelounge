@@ -250,7 +250,9 @@ describe("Uploader", function () {
 	});
 
 	it("should not pass HTML error pages from public providers through", async function () {
-		fetchStub.resolves(new Response("<!DOCTYPE HTML><HTML><META NAME=\"ROBOTS\">", {status: 403}));
+		fetchStub.resolves(
+			new Response('<!DOCTYPE HTML><HTML><META NAME="ROBOTS">', {status: 403})
+		);
 
 		const response = await upload("catbox", getUploadToken());
 		const json = await response.json();

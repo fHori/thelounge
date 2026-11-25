@@ -106,6 +106,7 @@ export default [
 			"node_modules/**",
 			"dist/**",
 			"public/**",
+			"docs/**",
 			"test/public/**",
 			"coverage/**",
 			"webpack.config.mjs",

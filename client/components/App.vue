@@ -12,6 +12,7 @@
 		<ImageViewer ref="imageViewer" />
 		<ContextMenu ref="contextMenu" />
 		<ConfirmDialog ref="confirmDialog" />
+		<QuickSwitcher />
 		<div id="upload-overlay"></div>
 	</div>
 </template>
@@ -20,6 +21,8 @@
 import constants from "../js/constants";
 import eventbus from "../js/eventbus";
 import Mousetrap, {ExtendedKeyboardEvent} from "mousetrap";
+import QuickSwitcher from "./QuickSwitcher.vue";
+import {feature} from "../js/features";
 import throttle from "lodash/throttle";
 import storage from "../js/localStorage";
 import isIgnoredKeybind from "../js/helpers/isIgnoredKeybind";
@@ -54,6 +57,7 @@ export default defineComponent({
 		ContextMenu,
 		ConfirmDialog,
 		Mentions,
+		QuickSwitcher,
 	},
 	setup() {
 		const store = useStore();
@@ -103,6 +107,15 @@ export default defineComponent({
 			return false;
 		};
 
+		const openQuickSwitcher = () => {
+			if (!feature("quickSwitcher") || store.state.networks.length === 0) {
+				return true;
+			}
+
+			store.commit("quickSwitcherOpen", !store.state.quickSwitcherOpen);
+			return false;
+		};
+
 		const toggleMentions = () => {
 			if (store.state.networks.length !== 0) {
 				eventbus.emit("mentions:toggle");
@@ -145,6 +158,7 @@ export default defineComponent({
 			Mousetrap.bind("alt+u", toggleUserList);
 			Mousetrap.bind("alt+s", toggleSidebar);
 			Mousetrap.bind("alt+m", toggleMentions);
+			Mousetrap.bind("mod+k", openQuickSwitcher);
 
 			debouncedResize.value = throttle(() => {
 				eventbus.emit("resize");
@@ -167,6 +181,7 @@ export default defineComponent({
 			Mousetrap.unbind("alt+u");
 			Mousetrap.unbind("alt+s");
 			Mousetrap.unbind("alt+m");
+			Mousetrap.unbind("mod+k");
 
 			if (debouncedResize.value) {
 				window.removeEventListener("resize", debouncedResize.value);

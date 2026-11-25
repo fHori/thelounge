@@ -597,6 +597,44 @@ export default {
 		},
 	},
 
+	// ### `packageConfig`
+	//
+	// Settings of installed packages, by package name. Each package documents
+	// its own; for example:
+	//
+	// ```js
+	// packageConfig: {
+	// 	"thelounge-tracker-avatars": {ratePerMinute: 5},
+	// },
+	// ```
+	//
+	// Packages that run server code with the advanced package API only do so
+	// once allowed: `thelounge packages allow <name>` (you are asked when
+	// installing them).
+	packageConfig: {},
+
+	// ### `gifs`
+	//
+	// GIF search for the message box's GIF picker. The server does the
+	// searching, so browsers never contact the provider; a picked GIF is sent
+	// as a link. The keys below are this project's own; put your own Giphy or
+	// Tenor key here to use yours instead.
+	//
+	// - `enable`: set to `false` to hide the GIF picker.
+	// - `provider`: `"giphy"` or `"tenor"`.
+	// - `giphyKey`: a Giphy API key (developers.giphy.com).
+	// - `tenorKey`: a Tenor API key. Keys from Google Cloud (starting with
+	//   `AIza`) use Tenor's v2 API, older Tenor keys its v1 API.
+	// - `rating`: the most mature content allowed: `"g"`, `"pg"`, `"pg-13"`
+	//   or `"r"`.
+	gifs: {
+		enable: true,
+		provider: "giphy",
+		giphyKey: "Gc7131jiJuvI7IdN0HZ1D7nh0ow5BU6g",
+		tenorKey: "3Z0688EVWYKH",
+		rating: "pg-13",
+	},
+
 	// ## WEBIRC support
 	//
 	// When enabled, The Lounge will pass the connecting user's host and IP to the

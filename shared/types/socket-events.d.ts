@@ -75,6 +75,32 @@ interface ServerToClientEvents {
 
 	nick: EventHandler<{network: string; nick: string}>;
 
+	// Profiles and conversation details
+	"profile:info": EventHandler<{
+		target: number;
+		nick: string;
+		profile: import("./profile").UserProfile | null;
+	}>;
+	"details:links": EventHandler<{
+		target: number;
+		offset: number;
+		items: import("./profile").ConversationLink[];
+		more: boolean;
+	}>;
+	"details:preview": EventHandler<{url: string; preview: import("./msg").LinkPreview | null}>;
+
+	// Packages with the advanced API (see server/plugins/packages/advanced.ts)
+	"package:push": EventHandler<{pkg: string; event: string; data: unknown}>;
+	"package:rpc:result": EventHandler<{pkg: string; id: string; result?: unknown; error?: string}>;
+
+	// GIF picker results (see server/plugins/gifs.ts)
+	"gifs:results": EventHandler<{
+		id: string;
+		items: import("./gifs").Gif[];
+		next: string | null;
+		error?: string;
+	}>;
+
 	open: (id: number) => void;
 
 	part: EventHandler<{chan: number}>;
@@ -165,6 +191,12 @@ interface ClientToServerEvents {
 	"mute:change": EventHandler<{target: number; setMutedTo: boolean}>;
 	"pin:change": EventHandler<{target: number; setPinnedTo: boolean}>;
 	"tracker:user": EventHandler<{target: number; nick: string}>;
+
+	"gifs:search": EventHandler<{id: string; q: string; pos?: string | null}>;
+	"package:rpc": EventHandler<{pkg: string; id: string; method: string; args?: unknown}>;
+	"profile:get": EventHandler<{target: number; nick: string}>;
+	"details:links": EventHandler<{target: number; offset: number}>;
+	"details:preview": EventHandler<{url: string}>;
 
 	"push:register": EventHandler<PushSubscriptionJSON>;
 	"push:unregister": NoPayloadEventHandler;

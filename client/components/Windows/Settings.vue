@@ -3,6 +3,7 @@
 		<div class="header">
 			<SidebarToggle />
 		</div>
+		<ThemeSlot name="settings.top" />
 		<Navigation />
 
 		<div class="container">
@@ -18,12 +19,14 @@ import {defineComponent} from "vue";
 import SidebarToggle from "../SidebarToggle.vue";
 import Navigation from "../Settings/Navigation.vue";
 import {useStore} from "../../js/store";
+import ThemeSlot from "../ThemeSlot.vue";
 
 export default defineComponent({
 	name: "Settings",
 	components: {
 		SidebarToggle,
 		Navigation,
+		ThemeSlot,
 	},
 	setup() {
 		const store = useStore();

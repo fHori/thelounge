@@ -9,6 +9,9 @@ socket.once("configuration", function (data) {
 	// settings cannot be applied before this point
 	void store.dispatch("settings/applyAll");
 
+	// Client modules of packages (themes' load with the theme setting)
+	void import("../themeModules").then((m) => m.loadPackageModules());
+
 	if (data.fileUpload) {
 		upload.initialize();
 	}

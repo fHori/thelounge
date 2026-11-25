@@ -42,6 +42,7 @@ const uninstallCmd = await import("./uninstall.js");
 const upgradeCmd = await import("./upgrade.js");
 const outdatedCmd = await import("./outdated.js");
 const storageCmd = await import("./storage.js");
+const packagesCmd = await import("./packages.js");
 
 program.addCommand(startCmd.default);
 program.addCommand(installCmd.default);
@@ -49,6 +50,7 @@ program.addCommand(uninstallCmd.default);
 program.addCommand(upgradeCmd.default);
 program.addCommand(outdatedCmd.default);
 program.addCommand(storageCmd.default);
+program.addCommand(packagesCmd.default);
 
 if (!Config.values.public) {
 	const usersCmd = await import("./users/index.js");

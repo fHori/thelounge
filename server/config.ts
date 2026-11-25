@@ -76,6 +76,9 @@ type Ldap = {
 	baseDN?: string;
 };
 
+export type {Gifs} from "../shared/types/gifs.js";
+import type {Gifs} from "../shared/types/gifs.js";
+
 type Debug = {
 	logs: boolean;
 	ircFramework: boolean;
@@ -125,6 +128,9 @@ export type ConfigType = {
 	useHexIp: boolean;
 	webirc?: WebIRC;
 	trackers: Record<string, TrackerConfig | null> | null;
+	gifs: Gifs;
+	// Settings of packages, by package name (see each package's documentation)
+	packageConfig: Record<string, Record<string, unknown>>;
 	identd: Identd;
 	oidentd?: string;
 	ldap: Ldap;

@@ -18,6 +18,12 @@ type FetchRequest = {
 	size: number;
 };
 const currentFetchPromises = new Map<string, Promise<FetchRequest>>();
+
+// Previews asked for on their own (not for a new message): who to give them to,
+// and recent results
+const onDemand = new WeakMap<LinkPreview, (preview: LinkPreview | null) => void>();
+const onDemandCache = new Map<string, {at: number; preview: LinkPreview | null}>();
+const onDemandCacheMs = 60 * 60 * 1000;
 const imageTypeRegex = /^image\/.+/;
 const mediaTypeRegex = /^(audio|video)\/.+/;
 
@@ -378,6 +384,13 @@ function emitPreview(client: Client, chan: Chan, msg: Msg, preview: LinkPreview)
 		}
 	}
 
+	const done = onDemand.get(preview);
+
+	if (done) {
+		onDemand.delete(preview);
+		return done(preview);
+	}
+
 	client.emit("msg:preview", {
 		id: msg.id,
 		chan: chan.id,
@@ -386,6 +399,13 @@ function emitPreview(client: Client, chan: Chan, msg: Msg, preview: LinkPreview)
 }
 
 function removePreview(msg: Msg, preview: LinkPreview) {
+	const done = onDemand.get(preview);
+
+	if (done) {
+		onDemand.delete(preview);
+		done(null);
+	}
+
 	// If a preview fails to load, remove the link from msg object
 	// So that client doesn't attempt to display an preview on page reload
 	const index = msg.previews.indexOf(preview);
@@ -545,4 +565,74 @@ function normalizeURL(link: string, baseLink?: string, disallowHttp = false) {
 	}
 
 	return undefined;
+}
+
+/**
+ * The preview of a link from older history, which has none stored (previews
+ * are made when a message arrives). Same fetching and storage as for new
+ * messages; results are kept for an hour.
+ */
+export function previewFor(client: Client, link: string): Promise<LinkPreview | null> {
+	if (!Config.values.prefetch) {
+		return Promise.resolve(null);
+	}
+
+	const url = normalizeURL(link);
+
+	if (!url) {
+		return Promise.resolve(null);
+	}
+
+	const cached = onDemandCache.get(url);
+
+	if (cached && Date.now() - cached.at < onDemandCacheMs) {
+		return Promise.resolve(cached.preview);
+	}
+
+	const preview: LinkPreview = {
+		type: "loading",
+		head: "",
+		body: "",
+		thumb: "",
+		size: -1,
+		link,
+		shown: null,
+	};
+	// Only what parse() and the storage step look at
+	const msg = {id: -1, previews: [preview]} as unknown as Msg;
+	const chan = {id: -1} as unknown as Chan;
+
+	return new Promise((resolve) => {
+		let timer: NodeJS.Timeout | undefined = undefined;
+
+		const finish = (result: LinkPreview | null) => {
+			clearTimeout(timer);
+			const usable =
+				result && result.type !== "error" && result.type !== "loading" ? result : null;
+
+			if (onDemandCache.size > 500) {
+				onDemandCache.delete(onDemandCache.keys().next().value!);
+			}
+
+			onDemandCache.set(url, {at: Date.now(), preview: usable});
+			resolve(usable);
+		};
+
+		timer = setTimeout(() => {
+			onDemand.delete(preview);
+			finish(null);
+		}, 20000);
+
+		onDemand.set(preview, finish);
+
+		fetch(url, {
+			accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+			language: client.config.browser?.language || "",
+		})
+			.then((res) => parse(msg, chan, preview, res, client))
+			.catch(() => {
+				onDemand.delete(preview);
+				finish(null);
+			});
+	});
 }

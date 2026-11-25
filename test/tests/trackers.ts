@@ -123,7 +123,11 @@ describe("Config trackers", function () {
 			Config.values.trackers = _.cloneDeep(defaultConfig.trackers);
 
 			expect(Config.getTrackersForHost("irc.seedpool.org")).to.deep.equal([
-				{id: "SP", name: "Seedpool", profileUrl: "https://seedpool.org/users/{nick}"},
+				{
+					id: "SP",
+					name: "Seedpool",
+					profileUrl: "https://seedpool.org/users/{nick}",
+				},
 			]);
 			// No profiles by nick there, the entry only scopes the bridge matcher
 			expect(Config.getTrackersForHost("irc.gazellegames.net")![0].profileUrl).to.equal(

@@ -9,6 +9,7 @@ import type {InjectionKey} from "vue";
 import {SettingsState} from "./settings";
 import {SearchQuery} from "../../shared/types/storage";
 import {SharedConfiguration, LockedSharedConfiguration} from "../../shared/types/config";
+import {ChanType} from "../../shared/types/chan";
 
 const appName = document.title;
 
@@ -43,6 +44,8 @@ export type ClientSession = {
 export type State = {
 	appLoaded: boolean;
 	activeChannel?: NetChan;
+	// The channel shown last, kept while on settings, help and other windows
+	lastActiveChannel?: NetChan;
 	currentUserVisibleError: string | null;
 	desktopNotificationState: DesktopNotificationState;
 	isAutoCompleting: boolean;
@@ -55,6 +58,9 @@ export type State = {
 	serverConfiguration: SharedConfiguration | LockedSharedConfiguration | null;
 	sessions: ClientSession[];
 	sidebarOpen: boolean;
+	// Themes with a "home" (all networks' direct messages) show it instead of a network
+	homeOpen: boolean;
+	quickSwitcherOpen: boolean;
 	sidebarDragging: boolean;
 	userlistOpen: boolean;
 	versionData:
@@ -86,6 +92,7 @@ export type State = {
 const state = (): State => ({
 	appLoaded: false,
 	activeChannel: undefined,
+	lastActiveChannel: undefined,
 	currentUserVisibleError: null,
 	desktopNotificationState: detectDesktopNotificationState(),
 	isAutoCompleting: false,
@@ -97,6 +104,8 @@ const state = (): State => ({
 	serverConfiguration: null,
 	sessions: [],
 	sidebarOpen: false,
+	homeOpen: false,
+	quickSwitcherOpen: false,
 	sidebarDragging: false,
 	userlistOpen: storage.get("thelounge.state.userlist") !== "false",
 	versionData: null,
@@ -219,6 +228,8 @@ type Mutations = {
 	serverConfiguration(state: State, serverConfiguration: State["serverConfiguration"]): void;
 	sessions(state: State, payload: State["sessions"]): void;
 	sidebarOpen(state: State, payload: State["sidebarOpen"]): void;
+	homeOpen(state: State, payload: State["homeOpen"]): void;
+	quickSwitcherOpen(state: State, payload: State["quickSwitcherOpen"]): void;
 	sidebarDragging(state: State, payload: State["sidebarDragging"]): void;
 	toggleSidebar(state: State): void;
 	toggleUserlist(state: State): void;
@@ -238,6 +249,14 @@ const mutations: Mutations = {
 	},
 	activeChannel(state, netChan) {
 		state.activeChannel = netChan;
+
+		if (netChan) {
+			state.lastActiveChannel = netChan;
+
+			// A direct message is shown in the home (however it was opened), anything
+			// else in its network
+			state.homeOpen = netChan.channel.type === ChanType.QUERY;
+		}
 	},
 	currentUserVisibleError(state, error) {
 		state.currentUserVisibleError = error;
@@ -280,6 +299,12 @@ const mutations: Mutations = {
 	},
 	sidebarOpen(state, payload) {
 		state.sidebarOpen = payload;
+	},
+	homeOpen(state, payload) {
+		state.homeOpen = payload;
+	},
+	quickSwitcherOpen(state, payload) {
+		state.quickSwitcherOpen = payload;
 	},
 	sidebarDragging(state, payload) {
 		state.sidebarDragging = payload;

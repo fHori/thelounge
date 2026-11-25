@@ -30,6 +30,7 @@
 			<NetworkList />
 		</div>
 		<footer id="footer">
+			<ThemeSlot name="footer.start" />
 			<span
 				class="tooltipped tooltipped-n tooltipped-no-touch"
 				aria-label="Connect to network"
@@ -61,6 +62,17 @@
 					></button> </router-link
 			></span>
 			<span
+				v-if="discoverOn"
+				class="tooltipped tooltipped-n tooltipped-no-touch"
+				aria-label="Discover channels"
+				><router-link v-slot:default="{navigate, isActive}" to="/discover" custom>
+					<button
+						:class="['icon', 'discover', {active: isActive}]"
+						aria-label="Discover channels"
+						@click="navigate"
+					/> </router-link
+			></span>
+			<span
 				class="tooltipped tooltipped-n tooltipped-no-touch"
 				:aria-label="
 					store.state.serverConfiguration?.isUpdateAvailable
@@ -90,15 +102,18 @@
 </template>
 
 <script lang="ts">
-import {defineComponent, nextTick, onMounted, onUnmounted, PropType, ref} from "vue";
+import {computed, defineComponent, nextTick, onMounted, onUnmounted, PropType, ref} from "vue";
 import {useRoute} from "vue-router";
 import {useStore} from "../js/store";
 import NetworkList from "./NetworkList.vue";
+import ThemeSlot from "./ThemeSlot.vue";
+import {feature} from "../js/features";
 
 export default defineComponent({
 	name: "Sidebar",
 	components: {
 		NetworkList,
+		ThemeSlot,
 	},
 	props: {
 		overlay: {type: Object as PropType<HTMLElement | null>, required: true},
@@ -108,6 +123,8 @@ export default defineComponent({
 
 		const store = useStore();
 		const route = useRoute();
+
+		const discoverOn = computed(() => feature("discover"));
 
 		const touchStartPos = ref<Touch | null>();
 		const touchCurPos = ref<Touch | null>();
@@ -263,6 +280,7 @@ export default defineComponent({
 			onTouchMove,
 			onTouchEnd,
 			isPublic,
+			discoverOn,
 		};
 	},
 });

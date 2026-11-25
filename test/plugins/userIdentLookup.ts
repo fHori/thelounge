@@ -192,3 +192,34 @@ describe("UserIdentLookup", function () {
 		expect(await lookup.lookup(network, "frank")).to.equal(null);
 	});
 });
+
+describe("profileFromWhois", function () {
+	it("keeps the fields a profile shows, trimmed and typed", async function () {
+		const {profileFromWhois} = await import("../../server/plugins/userIdentLookup.js");
+		const profile = profileFromWhois({
+			nick: "Iroha",
+			ident: "~iroha",
+			hostname: "host.example",
+			real_name: "Iroha Example",
+			account: "Iroha",
+			channels: "@#general #dev",
+			idle: "120",
+			logon: 1763600000,
+			secure: true,
+			actual_ip: "203.0.113.7",
+		});
+
+		expect(profile).to.deep.include({
+			nick: "Iroha",
+			ident: "~iroha",
+			realName: "Iroha Example",
+			account: "Iroha",
+			channels: "@#general #dev",
+			idle: 120,
+			logon: 1763600000,
+			secure: true,
+			operator: false,
+		});
+		expect(profile).not.to.have.property("actual_ip");
+	});
+});

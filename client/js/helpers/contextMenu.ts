@@ -78,7 +78,7 @@ export function generateChannelContextMenu(
 				action: () => (network.isJoinChannelShown = true),
 			},
 			{
-				label: "List all channels",
+				label: "Browse channels",
 				type: "item",
 				class: "list",
 				action: () =>

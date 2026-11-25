@@ -1,6 +1,48 @@
 import type Network from "../models/network.js";
 
 export type UserIdent = {ident: string; hostname: string};
+export type {UserProfile} from "../../shared/types/profile.js";
+import type {UserProfile} from "../../shared/types/profile.js";
+
+// How long a WHOIS reply is kept for profiles
+const profileCacheMs = 5 * 60 * 1000;
+const maxProfiles = 200;
+
+const str = (v: unknown, max = 300) => (typeof v === "string" ? v.slice(0, max) : undefined);
+
+/** The parts of a WHOIS reply a profile shows. */
+export function profileFromWhois(data: Record<string, unknown>): UserProfile {
+	const profile: UserProfile = {nick: String(data.nick).slice(0, 64)};
+	const fields = {
+		ident: str(data.ident, 64),
+		hostname: str(data.hostname, 255),
+		realName: str(data.real_name),
+		account: str(data.account, 64),
+		server: str(data.server, 255),
+		serverInfo: str(data.server_info),
+		channels: str(data.channels, 2000),
+		away: str(data.away),
+	};
+
+	for (const [key, value] of Object.entries(fields)) {
+		if (value) {
+			profile[key] = value;
+		}
+	}
+
+	if (typeof data.idle === "number" || typeof data.idle === "string") {
+		profile.idle = Number(data.idle) || 0;
+	}
+
+	if (typeof data.logon === "number" || typeof data.logon === "string") {
+		profile.logon = Number(data.logon) || 0;
+	}
+
+	profile.secure = Boolean(data.secure);
+	profile.operator = Boolean(data.operator);
+	profile.bot = Boolean(data.bot);
+	return profile;
+}
 
 type Pending = {
 	timer: NodeJS.Timeout;
@@ -39,6 +81,8 @@ class UserIdentLookup {
 	private pending = new Map<string, Pending>();
 	// Lookups that gave up waiting, whose reply may still come
 	private timedOut = new Map<string, TimedOut>();
+	// Recent WHOIS replies (silent or shown), for profiles
+	private profiles = new Map<string, {at: number; profile: UserProfile}>();
 
 	constructor(private timeouts = defaultTimeouts) {}
 
@@ -62,6 +106,30 @@ class UserIdentLookup {
 			}
 		}
 
+		return this.send(network, nick);
+	}
+
+	/**
+	 * A user's profile from WHOIS, without showing the reply. Recent replies
+	 * are reused.
+	 */
+	async profile(network: Network, nick: string): Promise<UserProfile | null> {
+		if (!nickLike.test(nick)) {
+			return null;
+		}
+
+		const key = this.key(network, nick);
+		const cached = this.profiles.get(key);
+
+		if (cached && Date.now() - cached.at < profileCacheMs) {
+			return cached.profile;
+		}
+
+		await this.send(network, nick);
+		return this.profiles.get(key)?.profile ?? null;
+	}
+
+	private send(network: Network, nick: string): Promise<UserIdent | null> {
 		if (!network.irc?.connected) {
 			return Promise.resolve(null);
 		}
@@ -140,6 +208,7 @@ class UserIdentLookup {
 			whowas?: boolean;
 			ident?: unknown;
 			hostname?: unknown;
+			[key: string]: unknown;
 		}
 	): boolean {
 		// Not the answer to a WHOIS, and about someone who may be gone
@@ -148,6 +217,16 @@ class UserIdentLookup {
 		}
 
 		const key = this.key(network, data.nick);
+
+		if (!data.error) {
+			this.profiles.delete(key);
+			this.profiles.set(key, {at: Date.now(), profile: profileFromWhois(data)});
+
+			if (this.profiles.size > maxProfiles) {
+				this.profiles.delete(this.profiles.keys().next().value!);
+			}
+		}
+
 		const waiting = this.pending.get(key);
 		const late = !waiting && this.timedOut.has(key);
 

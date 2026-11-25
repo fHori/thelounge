@@ -38,6 +38,7 @@
 				:disabled="!store.state.isConnected"
 			/>
 		</span>
+		<ExpressionPicker @pick="insertText" @send-gif="sendGif" />
 		<span
 			id="submit-tooltip"
 			class="tooltipped tooltipped-w tooltipped-no-touch"
@@ -65,6 +66,8 @@ import {watch, defineComponent, nextTick, onMounted, PropType, ref, onUnmounted}
 import type {ClientNetwork, ClientChan} from "../js/types";
 import {useStore} from "../js/store";
 import {ChanType} from "../../shared/types/chan";
+import ExpressionPicker from "./ExpressionPicker.vue";
+import {feature} from "../js/features";
 
 const formattingHotkeys = {
 	"mod+k": "\x03",
@@ -94,6 +97,7 @@ const bracketWraps = {
 
 export default defineComponent({
 	name: "ChatInput",
+	components: {ExpressionPicker},
 	props: {
 		network: {type: Object as PropType<ClientNetwork>, required: true},
 		channel: {type: Object as PropType<ClientChan>, required: true},
@@ -130,6 +134,30 @@ export default defineComponent({
 			props.channel.pendingMessage = (e.target as HTMLInputElement).value;
 			props.channel.inputHistoryPosition = 0;
 			setInputSize();
+		};
+
+		// A GIF from the picker goes out right away, as a link
+		const sendGif = (url: string) => {
+			socket.emit("input", {target: props.channel.id, text: url});
+		};
+
+		// Puts text (e.g. an emoji from the picker) at the cursor, replacing any selection
+		const insertText = (text: string) => {
+			const el = input.value;
+			const value = props.channel.pendingMessage || "";
+			const start = el ? el.selectionStart : value.length;
+			const end = el ? el.selectionEnd : value.length;
+
+			props.channel.pendingMessage = value.slice(0, start) + text + value.slice(end);
+			props.channel.inputHistoryPosition = 0;
+			setInputSize();
+
+			void nextTick(() => {
+				if (el) {
+					el.focus();
+					el.selectionStart = el.selectionEnd = start + text.length;
+				}
+			});
 		};
 
 		const getInputPlaceholder = (channel: ClientChan) => {
@@ -285,6 +313,12 @@ export default defineComponent({
 			}
 
 			inputTrap.bind(enabledHotkeys, function (e, key) {
+				// With the quick switcher on, Ctrl+K opens it (like Discord)
+				if (key === "mod+k" && feature("quickSwitcher")) {
+					store.commit("quickSwitcherOpen", true);
+					return false;
+				}
+
 				const modifier = formattingHotkeys[key];
 
 				if (!e.target) {
@@ -402,6 +436,8 @@ export default defineComponent({
 			getInputPlaceholder,
 			onSubmit,
 			setPendingMessage,
+			insertText,
+			sendGif,
 		};
 	},
 });

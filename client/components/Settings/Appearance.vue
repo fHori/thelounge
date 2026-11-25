@@ -251,7 +251,10 @@
 					{{ theme.displayName }}
 				</option>
 			</select>
+			<ThemeOptions />
 		</div>
+
+		<FeatureSettings />
 
 		<div>
 			<h2>Custom Stylesheet</h2>
@@ -278,9 +281,12 @@ textarea#user-specified-css-input {
 <script lang="ts">
 import {defineComponent} from "vue";
 import {useStore} from "../../js/store";
+import ThemeOptions from "./ThemeOptions.vue";
+import FeatureSettings from "./Features.vue";
 
 export default defineComponent({
 	name: "AppearanceSettings",
+	components: {ThemeOptions, FeatureSettings},
 	setup() {
 		const store = useStore();
 

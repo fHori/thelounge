@@ -24,6 +24,7 @@ import themes from "./plugins/packages/themes.js";
 themes.loadLocalThemes();
 
 import packages from "./plugins/packages/index.js";
+import {callMethod, routeFor, setTransport, socketEvent} from "./plugins/packages/advanced.js";
 import {NetworkWithIrcFramework} from "./models/network.js";
 import Utils from "./command-line/utils.js";
 import type {
@@ -41,6 +42,13 @@ import {
 	LockedConfigNetDefaults,
 } from "../shared/types/config.js";
 import {userTrackerLimits, userTrackersSetting} from "../shared/trackers.js";
+import {sanitizeThemeOptionsSetting} from "../shared/themeOptions.js";
+import {allowGifSearch, gifProvider, searchGifs, type Gif} from "./plugins/gifs.js";
+import {previewFor} from "./plugins/irc-events/link.js";
+import {findLinksWithSchema} from "../shared/linkify.js";
+import {cleanIrcMessage} from "../shared/irc.js";
+import type {ConversationLink, UserProfile} from "../shared/types/profile.js";
+import {MessageType, type LinkPreview} from "../shared/types/msg.js";
 
 type ServerOptions = {
 	dev: boolean;
@@ -124,6 +132,19 @@ export default async function (
 		}
 
 		return res.sendFile(theme.filename);
+	});
+
+	// Routes of packages with the advanced API (see plugins/packages/advanced.ts)
+	app.get(/^\/packages\/([^/]+)\/x\/(.+)$/, (req, res) => {
+		const params = req.params as unknown as Record<string, string>;
+		const route = routeFor(decodeURIComponent(params[0]), params[1]);
+
+		if (!route) {
+			return res.status(404).send("Not found");
+		}
+
+		res.setHeader("X-Content-Type-Options", "nosniff");
+		return route.handler(req, res, route.rest);
 	});
 
 	app.get("/packages/:package/:filename", (req, res) => {
@@ -260,6 +281,16 @@ export default async function (
 				});
 
 				manager = new ClientManager();
+
+				// How packages with the advanced API reach users and their browsers
+				setTransport({
+					clients: () => manager?.clients || [],
+					toClient: (client, pkg, event, data) =>
+						client.emit("package:push", {pkg, event, data}),
+					toSocket: (socketId, pkg, event, data) =>
+						sockets?.to(socketId).emit("package:push", {pkg, event, data}),
+				});
+
 				await packages.loadPackages();
 
 				const defaultTheme = themes.getByName(Config.values.theme);
@@ -447,7 +478,14 @@ function addSecurityHeaders(_req: Request, res: Response, next: NextFunction) {
 	// - https://user-images.githubusercontent.com is where we currently push our changelog screenshots
 	// - data: is required for the HTML5 video player
 	if (Config.values.prefetchStorage || !Config.values.prefetch) {
-		policies.push("img-src 'self' data: https://user-images.githubusercontent.com");
+		// The GIF picker shows the provider's images directly
+		const gifHosts = {
+			giphy: " https://*.giphy.com",
+			tenor: " https://media.tenor.com https://c.tenor.com",
+		}[gifProvider() || ""];
+		policies.push(
+			`img-src 'self' data: https://user-images.githubusercontent.com${gifHosts || ""}`
+		);
 		policies.unshift("block-all-mixed-content");
 	} else {
 		policies.push("img-src http: https: data:");
@@ -523,7 +561,190 @@ function initializeClient(
 	}
 
 	socket.on("disconnect", function () {
+		socketEvent("socket:disconnect", client, socket.id);
 		process.nextTick(() => client.clientDetach(socket.id));
+	});
+
+	socketEvent("socket:connect", client, socket.id);
+
+	// A method call from a package's client module (see plugins/packages/advanced.ts)
+	socket.on("package:rpc", (data) => {
+		if (
+			!_.isPlainObject(data) ||
+			typeof data.pkg !== "string" ||
+			typeof data.method !== "string" ||
+			typeof data.id !== "string" ||
+			data.id.length > 64
+		) {
+			return;
+		}
+
+		void callMethod(client, socket.id, data.pkg, data.method, data.args).then((reply) =>
+			socket.emit("package:rpc:result", {pkg: data.pkg, id: data.id, ...reply})
+		);
+	});
+
+	// Profiles and conversation details (a DM's profile panel, the details page)
+	const detailRequests: number[] = [];
+
+	const allowDetailRequest = () => {
+		const now = Date.now();
+
+		while (detailRequests.length && now - detailRequests[0] > 60000) {
+			detailRequests.shift();
+		}
+
+		if (detailRequests.length >= 120) {
+			return false;
+		}
+
+		detailRequests.push(now);
+		return true;
+	};
+
+	socket.on("profile:get", (data) => {
+		if (!_.isPlainObject(data) || typeof data.nick !== "string") {
+			return;
+		}
+
+		const found = client.find(Number(data.target));
+		const reply = (profile: UserProfile | null) =>
+			socket.emit("profile:info", {target: data.target, nick: data.nick, profile});
+
+		if (!found || !allowDetailRequest()) {
+			return reply(null);
+		}
+
+		client.userIdentLookup
+			.profile(found.network, data.nick)
+			.then(reply)
+			.catch(() => reply(null));
+	});
+
+	// Every link posted in a conversation: loaded messages (with their
+	// previews) and, with message storage, older history
+	socket.on("details:links", (data) => {
+		if (!_.isPlainObject(data)) {
+			return;
+		}
+
+		const offset = Math.max(0, Number(data.offset) || 0);
+		const found = client.find(Number(data.target));
+		const reply = (items: ConversationLink[], more: boolean) =>
+			socket.emit("details:links", {target: data.target, offset, items, more});
+
+		if (!found || !allowDetailRequest()) {
+			return reply([], false);
+		}
+
+		const {network, chan} = found;
+		const seen = new Set<string>();
+		const items: ConversationLink[] = [];
+
+		const add = (
+			text: string,
+			msgId: number,
+			time: number,
+			from: string,
+			previews: LinkPreview[] = []
+		) => {
+			for (const {link} of findLinksWithSchema(text)) {
+				if (seen.has(link) || items.length >= 500) {
+					continue;
+				}
+
+				seen.add(link);
+				const preview = previews.find((p) => p.link === link && p.type !== "loading");
+				items.push({url: link, msgId, time, from, ...(preview ? {preview} : {})});
+			}
+		};
+
+		const loaded = async () => {
+			if (offset === 0) {
+				for (const msg of [...chan.messages].reverse()) {
+					if (msg.type === MessageType.MESSAGE || msg.type === MessageType.ACTION) {
+						add(
+							cleanIrcMessage(msg.text),
+							msg.id,
+							new Date(msg.time).getTime(),
+							msg.from?.nick || "",
+							msg.previews
+						);
+					}
+				}
+			}
+
+			if (!client.messageProvider) {
+				return false;
+			}
+
+			const res = await client.messageProvider.search({
+				searchTerm: "://",
+				networkUuid: network.uuid,
+				channelName: chan.name,
+				offset,
+			});
+
+			for (const msg of res.results) {
+				add(
+					cleanIrcMessage(msg.text || ""),
+					msg.id,
+					new Date(msg.time).getTime(),
+					msg.from?.nick || ""
+				);
+			}
+
+			return res.results.length >= 100;
+		};
+
+		loaded()
+			.then((more) => reply(items, more))
+			.catch(() => reply(items, false));
+	});
+
+	socket.on("details:preview", (data) => {
+		if (!_.isPlainObject(data) || typeof data.url !== "string" || data.url.length > 2048) {
+			return;
+		}
+
+		const reply = (preview: LinkPreview | null) =>
+			socket.emit("details:preview", {url: data.url, preview});
+
+		if (!allowDetailRequest()) {
+			return reply(null);
+		}
+
+		previewFor(client, data.url)
+			.then(reply)
+			.catch(() => reply(null));
+	});
+
+	// GIF picker: the server searches the provider, so browsers never talk to it
+	socket.on("gifs:search", (data) => {
+		if (
+			!_.isPlainObject(data) ||
+			typeof data.id !== "string" ||
+			data.id.length > 64 ||
+			typeof data.q !== "string"
+		) {
+			return;
+		}
+
+		const pos = typeof data.pos === "string" && data.pos.length < 200 ? data.pos : null;
+		const reply = (r: {items: Gif[]; next: string | null; error?: string}) =>
+			socket.emit("gifs:results", {id: data.id, ...r});
+
+		if (!gifProvider()) {
+			return reply({items: [], next: null, error: "GIFs are off on this server"});
+		}
+
+		if (!allowGifSearch(client.name)) {
+			return reply({items: [], next: null, error: "Too many searches, wait a moment"});
+		}
+
+		searchGifs(data.q, pos)
+			.then((page) => reply(page))
+			.catch(() => reply({items: [], next: null, error: "GIF search failed"}));
 	});
 
 	socket.on("input", (data) => {
@@ -887,6 +1108,20 @@ function initializeClient(
 				return;
 			}
 
+			// Theme options are checked against the installed themes' declared options
+			if (newSetting.name === "themeOptions") {
+				const clean = sanitizeThemeOptionsSetting(newSetting.value, (name) => {
+					const theme = themes.getByName(name);
+					return theme ? theme.options || {} : undefined;
+				});
+
+				if (clean === null) {
+					return;
+				}
+
+				newSetting.value = clean;
+			}
+
 			// We do not need to do write operations and emit events if nothing changed.
 			if (client.config.clientSettings[newSetting.name] !== newSetting.value) {
 				client.config.clientSettings[newSetting.name] = newSetting.value;
@@ -1099,12 +1334,25 @@ function initializeClient(
 function getClientConfiguration(): SharedConfiguration | LockedSharedConfiguration {
 	const common = {
 		fileUpload: Config.values.fileUpload.enable,
+		gifs: gifProvider(),
 		ldapEnabled: Config.values.ldap.enable,
 		isUpdateAvailable: changelog.isUpdateAvailable,
 		applicationServerKey: manager!.webPush.vapidKeys!.publicKey,
 		version: Helper.getVersionNumber(),
 		gitCommit: Helper.getGitCommit(),
-		themes: themes.getAll(),
+		// Whether each theme's recommended packages are installed here
+		themes: themes.getAll().map((theme) =>
+			theme.recommends
+				? {
+						...theme,
+						recommends: theme.recommends.map((r) => ({
+							...r,
+							installed: Boolean(packages.getPackage(r.name)),
+						})),
+					}
+				: theme
+		),
+		packageModules: packages.getClientModules(),
 		defaultTheme: Config.values.theme,
 		public: Config.values.public,
 		useHexIp: Config.values.useHexIp,

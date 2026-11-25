@@ -28,6 +28,7 @@
 				@focus="activateSearch"
 			/>
 		</div>
+		<HomeDirectMessages v-if="!searchText && homeDmsOn" />
 		<div v-if="searchText" class="jump-to-results">
 			<div v-if="results.length">
 				<div
@@ -77,6 +78,7 @@
 					:key="network.uuid"
 					:class="{
 						collapsed: network.isCollapsed,
+						'last-active': store.state.lastActiveChannel?.network.uuid === network.uuid,
 						'not-connected': !network.status.connected,
 						'not-secure': !network.status.secure,
 					}"
@@ -99,6 +101,7 @@
 							network.isJoinChannelShown = !network.isJoinChannelShown
 						"
 					/>
+					<ThemeSlot name="network.header" :props="{network}" />
 					<JoinChannel
 						v-if="network.isJoinChannelShown"
 						:network="network"
@@ -139,12 +142,14 @@
 					</Draggable>
 
 					<DirectMessageSection
+						v-if="!homeDmsOn"
 						:network="network"
 						:queries="network.channels.filter((c) => c.type === 'query')"
 					/>
 				</div>
 			</template>
 		</Draggable>
+		<ThemeSlot v-if="!searchText" name="sidebar.rail.end" />
 	</div>
 </template>
 
@@ -219,6 +224,8 @@ import NetworkLobby from "./NetworkLobby.vue";
 import Channel from "./Channel.vue";
 import JoinChannel from "./JoinChannel.vue";
 import DirectMessageSection from "./DirectMessageSection.vue";
+import HomeDirectMessages from "./HomeDirectMessages.vue";
+import ThemeSlot from "./ThemeSlot.vue";
 
 import socket from "../js/socket";
 import collapseNetworkHelper from "../js/helpers/collapseNetwork";
@@ -228,12 +235,15 @@ import eventbus from "../js/eventbus";
 import {ClientChan, NetChan, type SortableEvent} from "../js/types";
 import {useStore} from "../js/store";
 import {switchToChannel} from "../js/router";
+import {feature} from "../js/features";
 import Sortable from "sortablejs";
 
 export default defineComponent({
 	name: "NetworkList",
 	components: {
 		JoinChannel,
+		HomeDirectMessages,
+		ThemeSlot,
 		NetworkLobby,
 		Channel,
 		Draggable,
@@ -416,6 +426,13 @@ export default defineComponent({
 		};
 
 		const activateSearch = () => {
+			// With the quick switcher on, the box opens it instead
+			if (feature("quickSwitcher")) {
+				searchInput.value?.blur();
+				store.commit("quickSwitcherOpen", true);
+				return;
+			}
+
 			if (searchInput.value === document.activeElement) {
 				return;
 			}
@@ -552,7 +569,10 @@ export default defineComponent({
 			Mousetrap.unbind("alt+j");
 		});
 
+		const homeDmsOn = computed(() => feature("homeDms"));
+
 		return {
+			homeDmsOn,
 			store,
 			networklist,
 			searchInput,

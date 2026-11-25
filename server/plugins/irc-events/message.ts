@@ -8,6 +8,7 @@ import User from "../../models/user.js";
 import {MessageType} from "../../../shared/types/msg.js";
 import {ChanType} from "../../../shared/types/chan.js";
 import {MessageEventArgs} from "irc-framework";
+import {messageEvent} from "../packages/advanced.js";
 
 const nickRegExp = /(?:\x03[0-9]{1,2}(?:,[0-9]{1,2})?)?([\p{Letter}\p{Number}_[\]\\`^{|}-]+)/gu;
 
@@ -173,6 +174,11 @@ export default <IrcEventHandler>function (this: Client, irc, network) {
 		}
 
 		chan.pushMessage(this, msg, !msg.self);
+
+		// For packages with the advanced API (e.g. tracker avatars of who speaks)
+		if (chan.type === ChanType.CHANNEL || chan.type === ChanType.QUERY) {
+			messageEvent(this, network, chan, msg);
+		}
 
 		// Same messages the client notifies about with "Notify for all messages" on
 		const notify =

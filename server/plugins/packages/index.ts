@@ -6,6 +6,7 @@ import semver from "semver";
 import Helper from "../../helper.js";
 import Config from "../../config.js";
 import themes from "./themes.js";
+import {advancedApiFor, isAllowed, wantsAdvancedApi} from "./advanced.js";
 import inputs from "../inputs/index.js";
 import fs from "fs";
 import Utils from "../../command-line/utils.js";
@@ -57,6 +58,9 @@ export type PackageInfo = {
 	version: string;
 	type?: string;
 	files?: string[];
+	author?: unknown;
+	repository?: unknown;
+	homepage?: unknown;
 	// Legacy support
 	name?: string;
 	// Theme-specific fields (present when type === "theme")
@@ -66,6 +70,8 @@ export type PackageInfo = {
 
 const stylesheets: string[] = [];
 const files: string[] = [];
+// Client modules of non-theme packages: {name (URL-encoded), client file}
+const clientModules: {name: string; client: string}[] = [];
 
 const TIME_TO_LIVE = 15 * 60 * 1000; // 15 minutes, in milliseconds
 
@@ -76,7 +82,12 @@ const cache = {
 let experimentalWarningPrinted = false;
 let packageWatcher: fs.FSWatcher | null = null;
 
+function getClientModules() {
+	return clientModules;
+}
+
 export default {
+	getClientModules,
 	getFiles,
 	getStylesheets,
 	getPackage,
@@ -138,6 +149,7 @@ function getPackage(name: string) {
 
 function clearPackages() {
 	packageMap.clear();
+	clientModules.length = 0;
 	stylesheets.length = 0;
 	files.length = 0;
 	experimentalWarningPrinted = false;
@@ -185,6 +197,15 @@ async function loadPackage(packageName: string) {
 			);
 		}
 
+		// Packages asking for the advanced API run only once the admin allowed them
+		if (wantsAdvancedApi(packageInfo.thelounge) && !isAllowed(packageName)) {
+			log.warn(
+				`Package ${colors.bold(packageName)} wants to run server code with full access and was not started. ` +
+					`To allow it: ${colors.green(`thelounge packages allow ${packageName}`)}`
+			);
+			return;
+		}
+
 		// ESM requires importing a file, not a directory
 		// Determine the entry point from package.json
 		let entryPoint = "index.js";
@@ -228,6 +249,7 @@ async function loadPackage(packageName: string) {
 	}
 
 	const version = packageInfo.version;
+	const {author, repository, homepage} = packageInfo;
 	packageInfo = {
 		...packageInfo.thelounge,
 		packageName: packageName,
@@ -238,18 +260,39 @@ async function loadPackage(packageName: string) {
 
 	if (packageInfo.type === "theme") {
 		// PackageInfo includes theme-specific fields when type === "theme"
-		themes.addTheme(
-			packageName,
-			packageInfo as PackageInfo & {type: "theme"; themeColor: string; css: string}
-		);
+		themes.addTheme(packageName, {
+			...(packageInfo as PackageInfo & {type: "theme"; themeColor: string; css: string}),
+			author,
+			repository,
+			homepage,
+		});
+	}
 
-		if (packageInfo.files) {
-			packageInfo.files.forEach((file) => addFile(packageName, file));
-		}
+	if (packageInfo.files) {
+		packageInfo.files.forEach((file) => addFile(packageName, file));
+	}
+
+	// Client modules of packages other than themes load for everyone (themes' only
+	// while selected, see themes.ts)
+	const client = (packageInfo as {client?: unknown}).client;
+
+	if (
+		packageInfo.type !== "theme" &&
+		typeof client === "string" &&
+		/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}\.m?js$/.test(client) &&
+		packageInfo.files?.includes(client)
+	) {
+		clientModules.push({name: encodeURIComponent(packageName), client});
 	}
 
 	if (packageFile.onServerStart) {
-		packageFile.onServerStart(packageApis(packageInfo));
+		const api = packageApis(packageInfo);
+
+		if (wantsAdvancedApi(packageInfo) && isAllowed(packageName)) {
+			Object.assign(api, {Advanced: advancedApiFor(packageName)});
+		}
+
+		packageFile.onServerStart(api);
 	}
 
 	log.info(`Package ${colors.bold(packageName)} ${colors.green("v" + version)} loaded`);

@@ -17,13 +17,22 @@ import type {
 	DatabaseStats,
 	DiskProbe,
 	SearchIndexState,
+	SearchBatchStats,
+	SearchCursor,
 	SearchLogEntry,
 	SearchQuery,
+	SearchRequest,
 	SearchResponse,
 	SearchStats,
 	StorageDiagnostics,
 } from "../../../shared/types/storage.js";
-import {toStoredRow, historyLimit, maxMessageId} from "./sqlite.js";
+import {
+	toStoredRow,
+	historyLimit,
+	maxMessageId,
+	searchPageSize,
+	sortNewestFirst,
+} from "./sqlite.js";
 import type {StorageReply, StorageRequest} from "./sqliteWorker.js";
 
 type Pending = {resolve: (value: unknown) => void; reject: (err: Error) => void};
@@ -167,6 +176,15 @@ export async function stopStorageThread() {
 // How many searches diagnostics keep per user
 const searchLogSize = 20;
 
+// How many index hits (lookup) or messages (scan) a search batch looks at.
+// The first lookup batch is small so the first results show at once even
+// on a slow disk; later ones are sized to take about targetMs. Exported for
+// tests.
+export const searchBatchRows = {
+	lookup: {start: 25, min: 10, max: 2000, targetMs: 30},
+	scan: {start: 200, min: 50, max: 20000, targetMs: 30},
+};
+
 // Searches slower than this are logged, for those who only see the log
 const slowSearchMs = 2000;
 
@@ -188,7 +206,7 @@ const searchFilters = ["from", "datebefore", "dateafter"];
 
 // What diagnostics keep of a search: never the term, only its shape
 export function searchShape(
-	query: SearchQuery
+	query: Pick<SearchQuery, "searchTerm" | "networkUuid" | "channelName">
 ): Pick<SearchLogEntry, "termLength" | "filters" | "scope"> {
 	const words = query.searchTerm.split(" ");
 	const filters = searchFilters.filter((name) => words.some((w) => w.startsWith(`${name}:`)));
@@ -295,34 +313,146 @@ export default class ThreadedSqliteMessageStorage implements MessageProvider {
 		return this.read<number>(0, "getMaxMessageId");
 	}
 
-	async search(query: SearchQuery): Promise<SearchResponse> {
-		const start = performance.now();
-		const {response, stats} = await this.read<{
-			response: SearchResponse;
-			stats: SearchStats | null;
-		}>({response: {...query, results: []}, stats: null}, "searchWithStats", query);
+	/**
+	 * Searches newest first a batch at a time, handing each batch's results
+	 * to `onResults` as soon as it has them, until a page is full or nothing
+	 * older is left. Each batch is its own call to the storage thread, so
+	 * other work goes on in between, and `cancelled` is asked before each:
+	 * a search nobody waits for any more stops there. Resolves with the
+	 * cursor older results go on from, null when there are none.
+	 */
+	async searchStream(
+		request: Omit<SearchRequest, "id">,
+		onResults: (results: Msg[]) => void,
+		cancelled: () => boolean = () => false
+	): Promise<SearchCursor | null> {
+		const running = this.openThread();
 
-		if (stats) {
-			const entry: SearchLogEntry = {
-				...stats,
-				at: Date.now(),
-				...searchShape(query),
-				totalMs: performance.now() - start,
-			};
-			this.searchLog.unshift(entry);
-			this.searchLog.length = Math.min(this.searchLog.length, searchLogSize);
-
-			if (entry.totalMs > slowSearchMs) {
-				log.warn(
-					`Slow search for ${this.userName}: ${Math.round(entry.totalMs)} ms, ` +
-						`${entry.strategy}${entry.reason ? ` (${entry.reason})` : ""}, ` +
-						`query ${Math.round(entry.queryMs)} ms, ${entry.termLength} chars, ` +
-						`${entry.results} results. Details in Help → Diagnostics.`
-				);
-			}
+		if (!running) {
+			return null;
 		}
 
-		return {...response, results: response.results.map(toMsg)};
+		const start = performance.now();
+		const stats: SearchStats = {
+			strategy: "lookup",
+			examined: 0,
+			flushMs: 0,
+			indexMs: 0,
+			queryMs: 0,
+			batches: 0,
+			results: 0,
+			firstMs: null,
+			cancelled: false,
+		};
+		let cursor = request.cursor;
+		let rows =
+			cursor?.kind === "scan" ? searchBatchRows.scan.start : searchBatchRows.lookup.start;
+
+		for (;;) {
+			const batchStart = performance.now();
+			const batch = await running.call<{
+				results: Message[];
+				cursor: SearchCursor | null;
+				stats: SearchBatchStats;
+			}>(this.store, "searchBatch", {...request, cursor, rows});
+
+			// A search keeps the way it started; later batches don't say why
+			if (stats.batches === 0) {
+				stats.strategy = batch.stats.strategy;
+				stats.reason = batch.stats.reason;
+			}
+
+			stats.examined += batch.stats.examined;
+			stats.flushMs += batch.stats.flushMs;
+			stats.indexMs += batch.stats.indexMs;
+			stats.queryMs += batch.stats.queryMs;
+			stats.batches++;
+
+			if (batch.results.length) {
+				stats.results += batch.results.length;
+				stats.firstMs ??= performance.now() - start;
+				onResults(batch.results.map(toMsg));
+			}
+
+			cursor = batch.cursor;
+
+			if (!cursor || stats.results >= searchPageSize) {
+				break;
+			}
+
+			if (cancelled()) {
+				stats.cancelled = true;
+				break;
+			}
+
+			// Size the next batch to take about as long as targetMs, but no
+			// bigger than what likely fills the page at the rate rows matched
+			// so far, so a page doesn't grow far past its size
+			const limits = searchBatchRows[batch.stats.strategy];
+			const took = Math.max(1, performance.now() - batchStart);
+			const rate = stats.results / stats.examined;
+			const needed = rate > 0 ? (searchPageSize - stats.results) / rate : limits.max;
+			rows = Math.round(
+				Math.max(
+					limits.min,
+					Math.min(
+						limits.max,
+						needed,
+						Math.max((rows * limits.targetMs) / took, rows / 2)
+					)
+				)
+			);
+		}
+
+		this.logSearch(request, stats, performance.now() - start);
+		return cursor;
+	}
+
+	/**
+	 * A page of results at once, oldest first, for the MessageProvider
+	 * interface: the newest page, or the next older ones for offset 100,
+	 * 200 and so on.
+	 */
+	async search(query: SearchQuery): Promise<SearchResponse> {
+		const found: Msg[] = [];
+		let cursor: SearchCursor | null = null;
+
+		do {
+			cursor = await this.searchStream(
+				{
+					searchTerm: query.searchTerm,
+					networkUuid: query.networkUuid,
+					channelName: query.channelName,
+					cursor,
+				},
+				(results) => found.push(...results)
+			);
+		} while (cursor && found.length < query.offset + searchPageSize);
+
+		const page = sortNewestFirst(found).slice(query.offset, query.offset + searchPageSize);
+		return {...query, results: page.reverse()};
+	}
+
+	private logSearch(request: Omit<SearchRequest, "id">, stats: SearchStats, totalMs: number) {
+		const entry: SearchLogEntry = {
+			...stats,
+			at: Date.now(),
+			...searchShape(request),
+			more: request.cursor !== null,
+			totalMs,
+		};
+		this.searchLog.unshift(entry);
+		this.searchLog.length = Math.min(this.searchLog.length, searchLogSize);
+
+		if (entry.totalMs > slowSearchMs && !entry.cancelled) {
+			log.warn(
+				`Slow search for ${this.userName}: ${Math.round(entry.totalMs)} ms, ` +
+					`first result after ${entry.firstMs === null ? "-" : Math.round(entry.firstMs)} ms, ` +
+					`${entry.strategy}${entry.reason ? ` (${entry.reason})` : ""}, ` +
+					`query ${Math.round(entry.queryMs)} ms in ${entry.batches} batches, ` +
+					`${entry.termLength} chars, ${entry.results} results. Details in Help → Diagnostics.`
+			);
+		}
 	}
 
 	/**

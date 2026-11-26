@@ -29,7 +29,9 @@ import {MessageStorage, MessageProvider} from "./plugins/messageStorage/types.js
 import {StorageCleaner} from "./storageCleaner.js";
 import {
 	Diagnostics,
+	SearchCursor,
 	SearchQuery,
+	SearchRequest,
 	SearchResponse,
 	StorageDiagnostics,
 } from "../shared/types/storage.js";
@@ -870,6 +872,26 @@ class Client {
 		}
 
 		return {server: serverDiagnostics(), user: userDiagnostics(this), storage};
+	}
+
+	/**
+	 * Searches a page newest first, handing results over in batches as they
+	 * are found; see ThreadedSqliteMessageStorage.searchStream. Resolves with
+	 * the cursor for older results, null when there are none.
+	 */
+	async searchStream(
+		request: Omit<SearchRequest, "id">,
+		onResults: (results: Msg[]) => void,
+		cancelled: () => boolean
+	): Promise<SearchCursor | null> {
+		if (
+			!(this.messageProvider instanceof ThreadedSqliteMessageStorage) ||
+			!this.messageProvider.isEnabled
+		) {
+			return null;
+		}
+
+		return this.messageProvider.searchStream(request, onResults, cancelled);
 	}
 
 	async search(query: SearchQuery): Promise<SearchResponse> {

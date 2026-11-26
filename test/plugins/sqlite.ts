@@ -3,7 +3,7 @@ import os from "os";
 import path from "path";
 import {expect} from "chai";
 import util from "../util.js";
-import Msg from "../../server/models/msg.js";
+import Msg, {type Message} from "../../server/models/msg.js";
 import {MessageType} from "../../shared/types/msg.js";
 import Config from "../../server/config.js";
 import MessageStorage, {
@@ -11,9 +11,11 @@ import MessageStorage, {
 	migrations,
 	necessaryMigrations,
 	rollbacks,
-	searchLimits,
+	searchPageSize,
+	sortNewestFirst,
 	trigramQuery,
 } from "../../server/plugins/messageStorage/sqlite.js";
+import type {SearchCursor} from "../../shared/types/storage.js";
 import Database from "better-sqlite3";
 import type {DeletionRequest} from "../../server/plugins/messageStorage/types.js";
 import type Network from "../../server/models/network.js";
@@ -406,6 +408,18 @@ describe("SQLite background search index", function () {
 			await store.search({searchTerm: term, networkUuid: "net", channelName, offset: 0})
 		).results.map((m) => m.text);
 
+	// How the first step of a search went
+	const firstBatch = async (store: MessageStorage, term: string) =>
+		(
+			await store.searchBatch({
+				searchTerm: term,
+				networkUuid: "net",
+				channelName: "",
+				cursor: null,
+				rows: 10000,
+			})
+		).stats;
+
 	const searchable = Math.round(total * 0.9);
 
 	it("should open at once and build the index in the background", async function () {
@@ -478,6 +492,110 @@ describe("SQLite background search index", function () {
 		expect(await search(store, "line 2998")).to.deep.equal(["stored line 2998"]);
 	});
 
+	// A whole search the way the server runs it: batches of `rows` until
+	// nothing is left, with what each batch found
+	const batches = async (
+		store: MessageStorage,
+		searchTerm: string,
+		rows: number,
+		channelName = ""
+	) => {
+		const steps: {results: Message[]; examined: number}[] = [];
+		let cursor: SearchCursor | null = null;
+
+		do {
+			const batch = await store.searchBatch({
+				searchTerm,
+				networkUuid: "net",
+				channelName,
+				cursor,
+				rows,
+			});
+			steps.push({results: batch.results, examined: batch.stats.examined});
+			cursor = batch.cursor;
+		} while (cursor);
+
+		return steps;
+	};
+
+	it("should search newest first a batch at a time", async function () {
+		const store = await open();
+		await store.finishSearchIndex();
+
+		const steps = await batches(store, "stored line", 100);
+		const ids = steps.flatMap((step) => step.results.map((m) => m.id));
+
+		// Each batch looks at at most 100 index hits, newest first, and
+		// together they find every match once
+		expect(steps.every((step) => step.examined <= 100)).to.equal(true);
+		expect(new Set(ids).size).to.equal(searchable);
+		expect(steps[0].results.map((m) => m.text)).to.include("stored line 2998");
+		expect(steps[0].results.map((m) => m.text)).to.not.include("stored line 1");
+
+		// The same reading every message, in either scope
+		for (const channelName of ["", "#second"]) {
+			store.searchIndexReady = false;
+			const scanned = await batches(store, "stored line", 250, channelName);
+			store.searchIndexReady = true;
+			const found = scanned.flatMap((step) => step.results);
+
+			expect(scanned.every((step) => step.examined <= 250)).to.equal(true);
+			expect(found).to.have.lengthOf(channelName ? searchable / 2 : searchable);
+			expect(found[0].text).to.equal("stored line 2998");
+		}
+	});
+
+	it("should not lose messages that share a time between batches", async function () {
+		const store = await open();
+		const same = new Date(1800000000000);
+
+		for (let i = 0; i < 7; i++) {
+			await store.index(
+				{uuid: "net"} as Network,
+				{name: "#second"} as Channel,
+				new Msg({type: MessageType.MESSAGE, time: same, text: `same time ${i}`})
+			);
+		}
+
+		// Reading every message, two at a time: the cursor sits inside the run
+		const found = (await batches(store, "same time", 2)).flatMap((step) => step.results);
+		expect(found.map((m) => m.text).sort()).to.deep.equal(
+			Array.from({length: 7}, (_, i) => `same time ${i}`)
+		);
+	});
+
+	it("should put a bouncer's playback in its place by time", async function () {
+		const store = await open();
+		await store.finishSearchIndex();
+
+		// Stored last, but said long before everything else
+		await store.index(
+			{uuid: "net"} as Network,
+			{name: "#second"} as Channel,
+			new Msg({type: MessageType.MESSAGE, time: new Date(1000), text: "stored line late"})
+		);
+
+		const [first] = await batches(store, "stored line", 5);
+		expect(first.results.map((m) => m.text)).to.include("stored line late");
+
+		// A page is still cut by time: the newest 100 by what was said when
+		const page = await search(store, "stored line");
+		expect(page).to.have.lengthOf(searchPageSize);
+		expect(page).to.not.include("stored line late");
+		expect(page[page.length - 1]).to.equal("stored line 2998");
+	});
+
+	it("should stop reading at a dateafter: filter", async function () {
+		const store = await open();
+		const after = new Date(1700000000000 + total - 50).toISOString();
+		const steps = await batches(store, `line dateafter:${after}`, 20);
+		const found = steps.flatMap((step) => step.results);
+
+		expect(found.length).to.be.within(40, 50);
+		// Stopped soon after passing the date, not at the oldest message
+		expect(steps.reduce((sum, step) => sum + step.examined, 0)).to.be.below(100);
+	});
+
 	it("should report how far the index is and how searches went", async function () {
 		const store = await open();
 		const backfill = () => (store as unknown as {backfill: {rows: number}}).backfill;
@@ -490,24 +608,21 @@ describe("SQLite background search index", function () {
 		expect(building.progress).to.be.within(0.2, 0.5);
 		expect(building.remaining).to.be.within(1, total);
 
-		await search(store, "line 1234");
-		expect(store.lastSearchStats).to.include({
+		expect(await firstBatch(store, "line 1234")).to.include({
 			strategy: "scan",
 			reason: "index-building",
-			candidates: null,
-			results: 1,
+			examined: total,
 		});
 
 		await store.finishSearchIndex();
 		expect(store.searchIndexState()).to.deep.equal({state: "complete"});
 
-		await search(store, "line 1234");
-		expect(store.lastSearchStats).to.include({strategy: "lookup", results: 1});
-		expect(store.lastSearchStats!.reason).to.equal(undefined);
-		expect(store.lastSearchStats!.candidates).to.be.at.least(1);
+		const lookup = await firstBatch(store, "line 1234");
+		expect(lookup).to.include({strategy: "lookup"});
+		expect(lookup.reason).to.equal(undefined);
+		expect(lookup.examined).to.be.within(1, 10);
 
-		await search(store, "li");
-		expect(store.lastSearchStats).to.include({strategy: "scan", reason: "short-term"});
+		expect(await firstBatch(store, "li")).to.include({strategy: "scan", reason: "short-term"});
 	});
 
 	it("should report a failed index build", async function () {
@@ -523,8 +638,10 @@ describe("SQLite background search index", function () {
 		expect(failed.state).to.equal("failed");
 		expect(failed.error).to.match(/messages_fts/);
 
-		await search(store, "line 1234");
-		expect(store.lastSearchStats).to.include({strategy: "scan", reason: "index-failed"});
+		expect(await firstBatch(store, "line 1234")).to.include({
+			strategy: "scan",
+			reason: "index-failed",
+		});
 	});
 
 	it("should report database stats and time disk reads", async function () {
@@ -1096,8 +1213,8 @@ describe("SQLite Message Storage", function () {
 	const ftsNet = {uuid: "fts-network"} as Network;
 	const ftsChan = {name: "#fts"} as Channel;
 	const ftsOther = {name: "#fts-other"} as Channel;
-	const defaultLimits = {...searchLimits};
 
+	// The page the old way, oldest first
 	async function find(searchTerm: string, channelName: string) {
 		const {results} = await store.search({
 			searchTerm,
@@ -1109,25 +1226,62 @@ describe("SQLite Message Storage", function () {
 		return results.map((m) => m.text);
 	}
 
-	// Runs a search through all three strategies and insists they agree
+	// Every result of a search, in batches of `rows`, oldest first by time
+	async function collect(searchTerm: string, channelName: string, rows: number) {
+		const found: Message[] = [];
+		const seen = new Set<string>();
+		let cursor: SearchCursor | null = null;
+
+		do {
+			const batch = await store.searchBatch({
+				searchTerm,
+				networkUuid: ftsNet.uuid,
+				channelName,
+				cursor,
+				rows,
+			});
+
+			for (const message of batch.results) {
+				// Ids repeat in these messages: they're made without one
+				const key = `${message.text}@${new Date(message.time).getTime()}`;
+				expect(seen.has(key), `${key} found twice`).to.equal(false);
+				seen.add(key);
+			}
+
+			found.push(...batch.results);
+			cursor = batch.cursor;
+		} while (cursor);
+
+		return sortNewestFirst(found)
+			.reverse()
+			.map((m) => m.text);
+	}
+
+	// Runs a search in one batch, in batches of one, and reading every
+	// message, and insists they agree
 	async function findEveryWay(searchTerm: string, channelName = ftsChan.name) {
-		const found: (string | undefined)[][] = [];
+		const found = [await collect(searchTerm, channelName, 1000)];
+		found.push(await collect(searchTerm, channelName, 1));
+
+		const ready = store.searchIndexReady;
+		store.searchIndexReady = false;
 
 		try {
-			for (const limits of [
-				defaultLimits,
-				{direct: 0, filter: 1000},
-				{direct: 0, filter: 0},
-			]) {
-				Object.assign(searchLimits, limits);
-				found.push(await find(searchTerm, channelName));
-			}
+			found.push(await collect(searchTerm, channelName, 1000));
+			found.push(await collect(searchTerm, channelName, 2));
 		} finally {
-			Object.assign(searchLimits, defaultLimits);
+			store.searchIndexReady = ready;
 		}
 
-		expect(found[1]).to.deep.equal(found[0], `filtered walk differs for "${searchTerm}"`);
-		expect(found[2]).to.deep.equal(found[0], `plain walk differs for "${searchTerm}"`);
+		expect(found[1]).to.deep.equal(found[0], `batches of one differ for "${searchTerm}"`);
+		expect(found[2]).to.deep.equal(found[0], `scan differs for "${searchTerm}"`);
+		expect(found[3]).to.deep.equal(
+			found[0],
+			`scan in small batches differs for "${searchTerm}"`
+		);
+
+		// And the page the old way, oldest first
+		expect(await find(searchTerm, channelName)).to.deep.equal(found[0]);
 
 		return found[0];
 	}

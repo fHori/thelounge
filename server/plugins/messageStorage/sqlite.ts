@@ -12,11 +12,13 @@ import Network from "../../models/network.js";
 import type {
 	DatabaseStats,
 	DiskProbe,
+	SearchBatchQuery,
+	SearchBatchStats,
+	SearchCursor,
 	SearchIndexState,
 	SearchQuery,
 	SearchResponse,
 	SearchScanReason,
-	SearchStats,
 } from "../../../shared/types/storage.js";
 import {MessageType} from "../../../shared/types/msg.js";
 
@@ -60,15 +62,11 @@ const clearStepMs = 20;
 const ftsDefaultAutomerge = 4;
 const ftsDefaultDeleteMerge = 10;
 
-// How many index hits each search strategy is used for. Exported so tests can
-// force a strategy; the values come from measurements on a 3M message history.
-export const searchLimits = {
-	// Up to this many hits are fetched by id directly
-	direct: 5000,
-	// Up to this many are used as a filter while walking messages newest first.
-	// Beyond it the term is so common that a plain walk finds a page right away.
-	filter: 100000,
-};
+// Results per page of a search
+export const searchPageSize = 100;
+
+// Starts at no cursor: newer than anything stored
+const newestCursor = Number.MAX_SAFE_INTEGER;
 type Rollback = {version: number; rollback_forbidden?: boolean; stmts: string[]};
 
 export const currentSchemaVersion = 1794820000000; // use `new Date().getTime()`
@@ -282,8 +280,9 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 	searchIndexReady = true;
 	// Why the background build stopped, if it failed
 	private searchIndexError: string | null = null;
-	// How the last search went, for diagnostics
-	lastSearchStats: SearchStats | null = null;
+	// The background build waits until then: a search is going on, and it
+	// goes first
+	private searchingUntil = 0;
 	private finishing = false;
 	private backfill: {
 		timer: NodeJS.Timeout | null;
@@ -388,10 +387,15 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 			return;
 		}
 
-		// A few ms in between, so that a busy server isn't starved
+		// A few ms in between, so that a busy server isn't starved; longer
+		// while someone searches
+		const wait = Math.max(5, this.searchingUntil - Date.now());
+
 		this.backfill.timer = setTimeout(() => {
 			try {
-				if (this.backfill && !this.buildSearchIndexStep()) {
+				if (Date.now() < this.searchingUntil) {
+					this.scheduleSearchIndexStep();
+				} else if (this.backfill && !this.buildSearchIndexStep()) {
 					this.scheduleSearchIndexStep();
 				}
 			} catch (err) {
@@ -402,7 +406,7 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 				this.searchIndexError = String(err);
 				this.backfill = null;
 			}
-		}, 5);
+		}, wait);
 	}
 
 	/**
@@ -1137,7 +1141,46 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		return rows.reverse().map(rowToMessage);
 	}
 
+	/**
+	 * A page of results the old way, all at once, oldest first: the newest
+	 * page for offset 0, then older ones. Built from searchBatch(), which is
+	 * what the server uses.
+	 */
 	async search(query: SearchQuery): Promise<SearchResponse> {
+		const found: Message[] = [];
+		let cursor: SearchCursor | null = null;
+
+		do {
+			const batch = await this.searchBatch({
+				searchTerm: query.searchTerm,
+				networkUuid: query.networkUuid,
+				channelName: query.channelName,
+				cursor,
+				rows: 1000,
+			});
+			found.push(...batch.results);
+			cursor = batch.cursor;
+		} while (cursor && found.length < query.offset + searchPageSize);
+
+		const page = sortNewestFirst(found).slice(query.offset, query.offset + searchPageSize);
+
+		return {...query, results: page.reverse()};
+	}
+
+	/**
+	 * One step of a search, newest first: looks at up to `rows` index hits
+	 * (or messages, when the index can't help) below the cursor, and returns
+	 * the ones that match with the cursor to go on from. Results come in id
+	 * order, not quite time order: see SearchResultsChunk.
+	 *
+	 * Kept short on purpose, so the storage thread can do other work in
+	 * between and a search can stop as soon as it has a page.
+	 */
+	async searchBatch(query: SearchBatchQuery): Promise<{
+		results: Message[];
+		cursor: SearchCursor | null;
+		stats: SearchBatchStats;
+	}> {
 		await this.initDone.promise;
 
 		if (!this.isEnabled) {
@@ -1149,9 +1192,129 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 
 		// Flush any pending batched writes before searching
 		const flushStart = performance.now();
-		await this.flushBatch();
-		const flushMs = performance.now() - flushStart;
 
+		if (!query.cursor) {
+			await this.flushBatch();
+		}
+
+		const flushMs = performance.now() - flushStart;
+		const filter = this.searchFilter(query);
+		// The next batch of this search comes soon; the index build can wait
+		this.searchingUntil = Date.now() + 250;
+		const rows = Math.max(1, Math.floor(query.rows));
+		const columns = "m.id, m.msg, m.type, m.time, m.network, m.channel";
+		const fetch = (ids: number[]) =>
+			this.database
+				.prepare(
+					`SELECT ${columns} FROM json_each(?) c CROSS JOIN messages m ON m.id = c.value WHERE ${filter.where}`
+				)
+				.all(JSON.stringify(ids), ...filter.params);
+
+		// A search keeps the way it started: the index may complete meanwhile,
+		// and a lookup cursor means nothing to a scan
+		const plan =
+			query.cursor === null
+				? this.searchPlan(filter.term)
+				: query.cursor.kind === "lookup"
+					? {match: trigramQuery(filter.term)}
+					: {match: null, reason: this.searchPlan(filter.term).reason};
+
+		if (plan.match !== null) {
+			const beforeId = query.cursor?.kind === "lookup" ? query.cursor.beforeId : newestCursor;
+			const indexStart = performance.now();
+			const ids = this.database
+				.prepare(
+					"SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? AND rowid < ? ORDER BY rowid DESC LIMIT ?"
+				)
+				.pluck()
+				.all(plan.match, beforeId, rows) as number[];
+			const indexMs = performance.now() - indexStart;
+			const queryStart = performance.now();
+			const found = ids.length ? fetch(ids) : [];
+
+			return {
+				results: found.map(rowToMessage),
+				cursor: ids.length < rows ? null : {kind: "lookup", beforeId: ids[ids.length - 1]},
+				stats: {
+					strategy: "lookup",
+					examined: ids.length,
+					flushMs,
+					indexMs,
+					queryMs: performance.now() - queryStart,
+				},
+			};
+		}
+
+		// Walk the messages in scope newest first, on an index that has them
+		// in that order. Named explicitly because the planner otherwise
+		// prefers msg_type_idx and sorts every message there is.
+		const before =
+			query.cursor?.kind === "scan"
+				? [query.cursor.beforeTime, query.cursor.beforeId]
+				: [newestCursor, newestCursor];
+		const scope = query.networkUuid && query.channelName;
+		const walk = scope
+			? "messages m INDEXED BY network_channel_time WHERE m.network = ? AND m.channel = ? AND"
+			: "messages m INDEXED BY time WHERE";
+		const scopeParams = scope ? [query.networkUuid, query.channelName.toLowerCase()] : [];
+		const queryStart = performance.now();
+
+		// The oldest row this batch looks at, from the index alone; none when
+		// fewer than `rows` are left
+		const edge = this.database
+			.prepare(
+				`SELECT m.time, m.id FROM ${walk} (m.time, m.id) < (?, ?) ORDER BY m.time DESC, m.id DESC LIMIT 1 OFFSET ?`
+			)
+			.get(...scopeParams, ...before, rows - 1) as {time: number; id: number} | undefined;
+
+		// The matches between the cursor and the edge, in one pass
+		const found = this.database
+			.prepare(
+				`SELECT ${columns} FROM ${walk} (m.time, m.id) < (?, ?)${edge ? " AND (m.time, m.id) >= (?, ?)" : ""} AND ${filter.where} ORDER BY m.time DESC, m.id DESC`
+			)
+			.all(
+				...scopeParams,
+				...before,
+				...(edge ? [edge.time, edge.id] : []),
+				...filter.params
+			);
+
+		// Nothing older can match a dateafter: filter
+		const exhausted = !edge || (filter.after !== null && edge.time < filter.after);
+		const examined = edge
+			? rows
+			: (this.database
+					.prepare(`SELECT count(*) FROM ${walk} (m.time, m.id) < (?, ?)`)
+					.pluck()
+					.get(...scopeParams, ...before) as number);
+		const last = edge;
+
+		return {
+			results: found.map(rowToMessage),
+			cursor:
+				exhausted || !last
+					? null
+					: {kind: "scan", beforeTime: last.time, beforeId: last.id},
+			stats: {
+				strategy: "scan",
+				reason: plan.reason,
+				examined,
+				flushMs,
+				indexMs: 0,
+				queryMs: performance.now() - queryStart,
+			},
+		};
+	}
+
+	/**
+	 * The term without its filters (from:, datebefore:, dateafter:), and the
+	 * condition every result has to meet, the text match included. All ways
+	 * of searching check this against the stored row, so they find exactly
+	 * the same messages.
+	 */
+	private searchFilter(
+		query: Pick<SearchBatchQuery, "searchTerm" | "networkUuid" | "channelName">
+	) {
 		const searchTermParts = query.searchTerm.split(" ");
 
 		let userFilter: string | null = null;
@@ -1165,8 +1328,7 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 			}
 
 			if (part.startsWith("datebefore:") && dateEndFilter === null) {
-				const dateStr = part.slice(11);
-				const date = new Date(dateStr);
+				const date = new Date(part.slice(11));
 
 				if (!Number.isNaN(date.getTime())) {
 					dateEndFilter = date.getTime();
@@ -1175,8 +1337,7 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 			}
 
 			if (part.startsWith("dateafter:") && dateStartFilter === null) {
-				const dateStr = part.slice(10);
-				const date = new Date(dateStr);
+				const date = new Date(part.slice(10));
 
 				if (!Number.isNaN(date.getTime())) {
 					dateStartFilter = date.getTime();
@@ -1185,39 +1346,37 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 			}
 		}
 
-		const searchTerm = searchTermParts.join(" ");
+		const term = searchTermParts.join(" ");
 
 		// Using the '@' character to escape '%' and '_' in patterns.
-		const pattern = `%${searchTerm.replace(/([%_@])/g, "@$1")}%`;
+		const pattern = `%${term.replace(/([%_@])/g, "@$1")}%`;
 
-		// Every strategy below ends in this same check against the stored
-		// text, so they all return exactly the same rows.
 		let where = "m.type = 'message' AND json_extract(m.msg, '$.text') LIKE ? ESCAPE '@'";
-		const whereParams: unknown[] = [pattern];
+		const params: unknown[] = [pattern];
 
 		if (query.networkUuid) {
 			where += " AND m.network = ?";
-			whereParams.push(query.networkUuid);
+			params.push(query.networkUuid);
 		}
 
 		if (query.channelName) {
 			where += " AND m.channel = ?";
-			whereParams.push(query.channelName.toLowerCase());
+			params.push(query.channelName.toLowerCase());
 		}
 
 		if (userFilter !== null) {
 			where += " AND LOWER(json_extract(m.msg, '$.from.nick')) = ?";
-			whereParams.push(userFilter.toLowerCase());
+			params.push(userFilter.toLowerCase());
 		}
 
 		if (dateEndFilter !== null) {
 			where += " AND m.time <= ?";
-			whereParams.push(dateEndFilter);
+			params.push(dateEndFilter);
 		}
 
 		if (dateStartFilter !== null) {
 			where += " AND m.time >= ?";
-			whereParams.push(dateStartFilter);
+			params.push(dateStartFilter);
 		}
 
 		// Cleared channels whose rows aren't all deleted yet
@@ -1227,108 +1386,28 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 				(!query.channelName || query.channelName.toLowerCase() === clear.channel)
 			) {
 				where += " AND NOT (m.network = ? AND m.channel = ? AND m.id <= ?)";
-				whereParams.push(clear.network, clear.channel, clear.upto);
+				params.push(clear.network, clear.channel, clear.upto);
 			}
 		}
 
-		const maxResults = 100;
-		const columns = "m.id, m.msg, m.type, m.time, m.network, m.channel";
-		const tail = " ORDER BY m.time DESC, m.id DESC LIMIT ? OFFSET ?";
-		const tailParams = [maxResults, query.offset];
-
-		// An index that hands rows out newest first, so a walk can stop as soon
-		// as it has a page. Named explicitly because the planner otherwise
-		// prefers msg_type_idx and sorts every message there is.
-		const newestFirst =
-			query.networkUuid && query.channelName
-				? "messages m INDEXED BY network_channel_time"
-				: "messages m INDEXED BY time";
-
-		const indexStart = performance.now();
-		const {ids: candidates, reason} = this.searchCandidates(searchTerm);
-		const indexMs = performance.now() - indexStart;
-		const queryStart = performance.now();
-		let rows: unknown[];
-
-		if (candidates !== null && candidates.length <= searchLimits.direct) {
-			// Few places the term can be: look just those rows up. This is
-			// what makes rare and absent terms fast, they used to mean reading
-			// every message in scope.
-			rows = await this.serialize_fetchall(
-				`SELECT ${columns} FROM json_each(?) c CROSS JOIN messages m ON m.id = c.value WHERE ${where}${tail}`,
-				JSON.stringify(candidates),
-				...whereParams,
-				...tailParams
-			);
-		} else if (candidates !== null) {
-			// Too many to look up one by one, few enough to hold: walk newest
-			// first and skip anything the index rules out without reading it.
-			rows = await this.serialize_fetchall(
-				`SELECT ${columns} FROM ${newestFirst} WHERE m.id IN (SELECT value FROM json_each(?)) AND ${where}${tail}`,
-				JSON.stringify(candidates),
-				...whereParams,
-				...tailParams
-			);
-		} else {
-			// Either the index can't help (under 3 characters) or the term
-			// is everywhere, in which case the newest page fills up at once.
-			rows = await this.serialize_fetchall(
-				`SELECT ${columns} FROM ${newestFirst} WHERE ${where}${tail}`,
-				...whereParams,
-				...tailParams
-			);
-		}
-
-		this.lastSearchStats = {
-			strategy:
-				candidates === null
-					? "scan"
-					: candidates.length <= searchLimits.direct
-						? "lookup"
-						: "filter",
-			reason,
-			candidates: candidates === null ? null : candidates.length,
-			results: rows.length,
-			flushMs,
-			indexMs,
-			queryMs: performance.now() - queryStart,
-		};
-
-		return {
-			...query,
-			results: rows.map(rowToMessage).reverse(),
-		};
+		return {term, where, params, after: dateStartFilter};
 	}
 
 	/**
-	 * Ids of the messages that could contain `term`, according to the trigram
-	 * index: a superset of the real matches, never missing one. Null when the
-	 * index has nothing useful to say, with the reason: the index isn't
-	 * complete, the term is shorter than a trigram, or it matches more rows
-	 * than are worth collecting.
+	 * Whether the search index can say where `term` is: the index query for
+	 * it, or null and why not. Until every message is in the index, it can't
+	 * say where a term isn't, so search reads the messages themselves.
 	 */
-	private searchCandidates(term: string): {ids: number[] | null; reason?: SearchScanReason} {
-		// Until every message is in the index, it can't say where a term
-		// isn't, so search reads the messages themselves
+	private searchPlan(term: string): {match: string | null; reason?: SearchScanReason} {
 		if (!this.searchIndexReady) {
 			return {
-				ids: null,
+				match: null,
 				reason: this.searchIndexError === null ? "index-building" : "index-failed",
 			};
 		}
 
 		const match = trigramQuery(term);
-
-		if (match === null) {
-			return {ids: null, reason: "short-term"};
-		}
-
-		const ids = this.database
-			.prepare("SELECT rowid FROM messages_fts WHERE messages_fts MATCH ? LIMIT ?")
-			.pluck()
-			.all(match, searchLimits.filter + 1) as number[];
-
-		return ids.length > searchLimits.filter ? {ids: null, reason: "common-term"} : {ids};
+		return match === null ? {match, reason: "short-term"} : {match};
 	}
 
 	/**
@@ -1649,6 +1728,14 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 			return Promise.reject(err instanceof Error ? err : new Error(String(err)));
 		}
 	}
+}
+
+// Newest first by time, then by id; the order search pages are cut in
+export function sortNewestFirst<T extends {time: Date | number | string; id?: number}>(
+	messages: T[]
+): T[] {
+	const time = (m: T) => new Date(m.time).getTime();
+	return [...messages].sort((a, b) => time(b) - time(a) || (b.id ?? 0) - (a.id ?? 0));
 }
 
 // PRAGMA cache_size is in pages when positive, in KiB when negative

@@ -230,12 +230,10 @@ export default defineComponent({
 			store.state.settings.showAllDMs ? Number.MAX_SAFE_INTEGER : 5
 		);
 
-		const hasActiveQuery = computed(() => {
-			return (
-				props.queries.find((q) => q.id === store.state.activeChannel?.channel.id) !==
-				undefined
-			);
-		});
+		const isActiveQuery = (channel: ClientChan) =>
+			channel.id === store.state.activeChannel?.channel.id;
+
+		const hasActiveQuery = computed(() => props.queries.some(isActiveQuery));
 
 		// Count of unique conversations with unread messages (not total lines)
 		// Skip muted channels - they shouldn't contribute to the unread badge
@@ -286,13 +284,17 @@ export default defineComponent({
 			const unread = sortedQueries.value.filter((q) => !q.pinned && q.unread > 0);
 			const rest = sortedQueries.value.filter((q) => !q.pinned && q.unread === 0);
 
-			const remaining = maxVisible.value - pinned.length - unread.length;
+			const remaining = Math.max(0, maxVisible.value - pinned.length - unread.length);
+			const shown = rest.slice(0, remaining);
 
-			if (remaining <= 0) {
-				return [...pinned, ...unread];
+			// The open DM stays visible even when it falls past the limit
+			const active = rest.slice(remaining).find(isActiveQuery);
+
+			if (active) {
+				shown.push(active);
 			}
 
-			return [...pinned, ...unread, ...rest.slice(0, remaining)];
+			return [...pinned, ...unread, ...shown];
 		});
 
 		const hiddenCount = computed(() => {
@@ -304,8 +306,8 @@ export default defineComponent({
 		});
 
 		const shouldShowChannel = (channel: ClientChan) => {
-			if (isCollapsed.value && channel.highlight) return true;
-			if (isCollapsed.value && !channel.highlight) return false;
+			if (isActiveQuery(channel)) return true;
+			if (isCollapsed.value) return channel.highlight > 0;
 
 			return visibleQueries.value.includes(channel);
 		};

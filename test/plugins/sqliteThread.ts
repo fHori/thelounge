@@ -7,10 +7,12 @@ import Msg from "../../server/models/msg.js";
 import {MessageType} from "../../shared/types/msg.js";
 import Config from "../../server/config.js";
 import ThreadedSqliteMessageStorage, {
+	searchBatchRows,
 	stopStorageThread,
 } from "../../server/plugins/messageStorage/sqliteThread.js";
 import type Network from "../../server/models/network.js";
 import type {Channel} from "../../server/models/chan.js";
+import type {SearchCursor} from "../../shared/types/storage.js";
 
 const net = {uuid: "thread-net"} as Network;
 const chan = {name: "#Thread"} as Channel;
@@ -140,6 +142,70 @@ describe("SQLite message storage thread", function () {
 		const messages = await reading;
 		expect(Date.now() - started).to.be.at.least(300);
 		expect(messages.at(-1)?.text).to.equal("written while locked");
+	});
+
+	// In order with the tests around them, on the same open store
+	const streamChan = {name: "#stream"} as Channel;
+	const streamRequest = (cursor: SearchCursor | null = null, searchTerm = "stream line") => ({
+		searchTerm,
+		networkUuid: net.uuid,
+		channelName: streamChan.name,
+		cursor,
+	});
+
+	it("streams search results a batch at a time, a page at a time", async function () {
+		for (let i = 0; i < 250; i++) {
+			await store.index(net, streamChan, message(1000 + i, 100000 + i, `stream line ${i}`));
+		}
+
+		const seen = new Set<string>();
+		const batches: Msg[][] = [];
+		let cursor: SearchCursor | null = null;
+		let pages = 0;
+
+		do {
+			cursor = await store.searchStream(streamRequest(cursor), (results) => {
+				batches.push(results);
+
+				for (const m of results) {
+					expect(seen.has(m.text), `${m.text} twice`).to.equal(false);
+					seen.add(m.text);
+				}
+			});
+			pages++;
+		} while (cursor);
+
+		expect(seen.size).to.equal(250);
+		expect(pages).to.equal(3);
+		expect(batches[0][0]).to.be.instanceOf(Msg);
+		// The first batch is small, so the first results show at once
+		expect(batches[0].length).to.be.at.most(searchBatchRows.lookup.start);
+		expect(batches[0].map((m) => m.text)).to.include("stream line 249");
+	});
+
+	it("stops a search that is cancelled", async function () {
+		let batches = 0;
+		const cursor = await store.searchStream(
+			streamRequest(),
+			() => batches++,
+			() => true
+		);
+
+		expect(batches).to.equal(1);
+		expect(cursor).to.not.equal(null);
+	});
+
+	it("streams a scan the same way while the index can't help", async function () {
+		const found: string[] = [];
+		let cursor: SearchCursor | null = null;
+
+		do {
+			cursor = await store.searchStream(streamRequest(cursor, "st"), (results) =>
+				found.push(...results.map((m) => m.text))
+			);
+		} while (cursor);
+
+		expect(found.filter((t) => t.startsWith("stream line"))).to.have.lengthOf(250);
 	});
 
 	it("hides a cleared channel", async function () {

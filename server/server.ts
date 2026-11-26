@@ -34,6 +34,8 @@ import type {
 	AuthPerformData,
 } from "../shared/types/socket-events";
 import {ChanType} from "../shared/types/chan.js";
+import type {SearchResultsChunk} from "../shared/types/storage.js";
+import {isSearchCursor} from "./searchCursor.js";
 import {
 	LockedSharedConfiguration,
 	SharedConfiguration,
@@ -921,28 +923,54 @@ function initializeClient(
 			socket.emit("setting:all", clientSettings);
 		});
 
-		socket.on("search", async (query) => {
+		// The search this connection waits for; an older one still running
+		// stops at its next batch
+		let currentSearch: number | null = null;
+
+		socket.on("search", async (request) => {
 			// The storage search calls string methods on these; a bad value
 			// would reject the promise, and nothing handles that rejection
 			if (
-				!_.isPlainObject(query) ||
-				typeof query.searchTerm !== "string" ||
-				typeof query.networkUuid !== "string" ||
-				typeof query.channelName !== "string" ||
-				// A safe integer: larger numbers are integers too, but the
-				// database refuses them
-				!Number.isSafeInteger(query.offset) ||
-				query.offset < 0
+				!_.isPlainObject(request) ||
+				!Number.isSafeInteger(request.id) ||
+				typeof request.searchTerm !== "string" ||
+				typeof request.networkUuid !== "string" ||
+				typeof request.channelName !== "string" ||
+				!isSearchCursor(request.cursor)
 			) {
 				return;
 			}
 
+			const {id} = request;
+			currentSearch = id;
+			const answer = (chunk: Omit<SearchResultsChunk, "id">) =>
+				socket.emit("search:results", {id, ...chunk});
+
 			try {
-				socket.emit("search:results", await client.search(query));
+				const cursor = await client.searchStream(
+					{
+						searchTerm: request.searchTerm,
+						networkUuid: request.networkUuid,
+						channelName: request.channelName,
+						cursor: request.cursor,
+					},
+					(results) => answer({results, done: false, cursor: null}),
+					() => currentSearch !== id || socket.disconnected
+				);
+
+				if (currentSearch === id) {
+					answer({results: [], done: true, cursor});
+				}
 			} catch (err) {
 				// Always answer, the client waits for it
 				log.error(`Search failed for ${client.name}: ${String(err)}`);
-				socket.emit("search:results", {...query, results: []});
+				answer({results: [], done: true, cursor: null});
+			}
+		});
+
+		socket.on("search:cancel", (id) => {
+			if (currentSearch === id) {
+				currentSearch = null;
 			}
 		});
 

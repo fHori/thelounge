@@ -12,8 +12,19 @@ import Msg, {Message} from "../../models/msg.js";
 import type {Channel} from "../../models/chan.js";
 import type Network from "../../models/network.js";
 import type {DeletionRequest, MessageProvider} from "./types.js";
-import type {SearchQuery, SearchResponse} from "../../../shared/types/storage.js";
-import {toStoredRow, historyLimit, maxMessageId} from "./sqlite.js";
+import type {
+	SearchCursor,
+	SearchQuery,
+	SearchRequest,
+	SearchResponse,
+} from "../../../shared/types/storage.js";
+import {
+	toStoredRow,
+	historyLimit,
+	maxMessageId,
+	searchPageSize,
+	sortNewestFirst,
+} from "./sqlite.js";
 import type {StorageReply, StorageRequest} from "./sqliteWorker.js";
 
 type Pending = {resolve: (value: unknown) => void; reject: (err: Error) => void};
@@ -149,6 +160,15 @@ export async function stopStorageThread() {
 	}
 }
 
+// How many index hits (lookup) or messages (scan) a search batch looks at.
+// The first lookup batch is small so the first results show at once even
+// on a slow disk; later ones are sized to take about targetMs. Exported for
+// tests.
+export const searchBatchRows = {
+	lookup: {start: 25, min: 10, max: 2000, targetMs: 30},
+	scan: {start: 200, min: 50, max: 20000, targetMs: 30},
+};
+
 // Messages come back from the storage thread as plain objects
 function toMsg(message: object): Msg {
 	return new Msg(message);
@@ -237,9 +257,102 @@ export default class ThreadedSqliteMessageStorage implements MessageProvider {
 		return this.read<number>(0, "getMaxMessageId");
 	}
 
+	/**
+	 * Searches newest first a batch at a time, handing each batch's results
+	 * to `onResults` as soon as it has them, until a page is full or nothing
+	 * older is left. Each batch is its own call to the storage thread, so
+	 * other work goes on in between, and `cancelled` is asked before each:
+	 * a search nobody waits for any more stops there. Resolves with the
+	 * cursor older results go on from, null when there are none.
+	 */
+	async searchStream(
+		request: Omit<SearchRequest, "id">,
+		onResults: (results: Msg[]) => void,
+		cancelled: () => boolean = () => false
+	): Promise<SearchCursor | null> {
+		const running = this.openThread();
+
+		if (!running) {
+			return null;
+		}
+
+		let cursor = request.cursor;
+		let kind: SearchCursor["kind"] = cursor?.kind ?? "lookup";
+		let rows = searchBatchRows[kind].start;
+		let results = 0;
+		let examined = 0;
+
+		for (;;) {
+			const batchStart = performance.now();
+			const batch = await running.call<{
+				results: Message[];
+				cursor: SearchCursor | null;
+				examined: number;
+			}>(this.store, "searchBatch", {...request, cursor, rows});
+
+			examined += batch.examined;
+
+			if (batch.results.length) {
+				results += batch.results.length;
+				onResults(batch.results.map(toMsg));
+			}
+
+			cursor = batch.cursor;
+
+			if (!cursor || results >= searchPageSize || cancelled()) {
+				return cursor;
+			}
+
+			// The first batch decides: the index may not help this search
+			if (cursor.kind !== kind) {
+				kind = cursor.kind;
+				rows = searchBatchRows[kind].start;
+				continue;
+			}
+
+			// Size the next batch to take about as long as targetMs, but no
+			// bigger than what likely fills the page at the rate rows matched
+			// so far, so a page doesn't grow far past its size
+			const limits = searchBatchRows[kind];
+			const took = Math.max(1, performance.now() - batchStart);
+			const rate = results / examined;
+			const needed = rate > 0 ? (searchPageSize - results) / rate : limits.max;
+			rows = Math.round(
+				Math.max(
+					limits.min,
+					Math.min(
+						limits.max,
+						needed,
+						Math.max((rows * limits.targetMs) / took, rows / 2)
+					)
+				)
+			);
+		}
+	}
+
+	/**
+	 * A page of results at once, oldest first, for the MessageProvider
+	 * interface: the newest page, or the next older ones for offset 100,
+	 * 200 and so on.
+	 */
 	async search(query: SearchQuery): Promise<SearchResponse> {
-		const response = await this.read<SearchResponse>({...query, results: []}, "search", query);
-		return {...response, results: response.results.map(toMsg)};
+		const found: Msg[] = [];
+		let cursor: SearchCursor | null = null;
+
+		do {
+			cursor = await this.searchStream(
+				{
+					searchTerm: query.searchTerm,
+					networkUuid: query.networkUuid,
+					channelName: query.channelName,
+					cursor,
+				},
+				(results) => found.push(...results)
+			);
+		} while (cursor && found.length < query.offset + searchPageSize);
+
+		const page = sortNewestFirst(found).slice(query.offset, query.offset + searchPageSize);
+		return {...query, results: page.reverse()};
 	}
 
 	async getMessagesBefore(

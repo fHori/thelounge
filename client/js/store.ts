@@ -7,7 +7,8 @@ import type {ClientChan, ClientNetwork, NetChan, ClientMention, ClientMessage} f
 import type {InjectionKey} from "vue";
 
 import {SettingsState} from "./settings";
-import {SearchQuery} from "../../shared/types/storage";
+import type {SearchCursor} from "../../shared/types/storage";
+import mergeSearchResults from "./helpers/mergeSearchResults";
 import {SharedConfiguration, LockedSharedConfiguration} from "../../shared/types/config";
 
 const appName = document.title;
@@ -79,7 +80,15 @@ export type State = {
 	messageSearchResults: {
 		results: ClientMessage[];
 	} | null;
-	messageSearchPendingQuery: SearchQuery | null;
+	// The page of results being searched for, or the last one found
+	messageSearch: {
+		id: number;
+		// Results go on from here: "Show older messages" asks for more
+		cursor: SearchCursor | null;
+		done: boolean;
+		// Older results than the first page
+		more: boolean;
+	} | null;
 	searchEnabled: boolean;
 };
 
@@ -104,7 +113,7 @@ const state = (): State => ({
 	versionDataExpired: false,
 	serverHasSettings: false,
 	messageSearchResults: null,
-	messageSearchPendingQuery: null,
+	messageSearch: null,
 	searchEnabled: false,
 });
 
@@ -227,9 +236,9 @@ type Mutations = {
 	versionStatus(state: State, payload: State["versionStatus"]): void;
 	versionDataExpired(state: State, payload: State["versionDataExpired"]): void;
 	serverHasSettings(state: State, value: State["serverHasSettings"]): void;
-	messageSearchPendingQuery(state: State, value: State["messageSearchPendingQuery"]): void;
+	messageSearch(state: State, value: State["messageSearch"]): void;
 	messageSearchResults(state: State, value: State["messageSearchResults"]): void;
-	addMessageSearchResults(state: State, value: NonNullable<State["messageSearchResults"]>): void;
+	addMessageSearchResults(state: State, value: ClientMessage[]): void;
 };
 
 const mutations: Mutations = {
@@ -305,26 +314,15 @@ const mutations: Mutations = {
 	serverHasSettings(state, value) {
 		state.serverHasSettings = value;
 	},
-	messageSearchPendingQuery(state, value) {
-		state.messageSearchPendingQuery = value;
+	messageSearch(state, value) {
+		state.messageSearch = value;
 	},
 	messageSearchResults(state, value) {
 		state.messageSearchResults = value;
 	},
 	addMessageSearchResults(state, value) {
-		// Append the search results and add networks and channels to new messages
-		if (!state.messageSearchResults) {
-			state.messageSearchResults = {results: []};
-		}
-
-		if (!value) {
-			return;
-		}
-
-		const results = [...value.results, ...state.messageSearchResults.results];
-
 		state.messageSearchResults = {
-			results,
+			results: mergeSearchResults(state.messageSearchResults?.results ?? [], value ?? []),
 		};
 	},
 };

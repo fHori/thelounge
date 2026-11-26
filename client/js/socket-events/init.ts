@@ -1,5 +1,6 @@
 import socket from "../socket";
 import storage from "../localStorage";
+import drafts, {DRAFT_PREFIX, draftKey} from "../drafts";
 import {toClientChan, markMsgsRaw} from "../chan";
 import {router, switchToChannel, navigate} from "../router";
 import {store} from "../store";
@@ -17,10 +18,29 @@ document.addEventListener("visibilitychange", () => {
 	}
 });
 
+// Follow drafts typed in other tabs, unless this tab has edited that channel's text
+window.addEventListener("storage", (e) => {
+	if (!e.key || !e.key.startsWith(DRAFT_PREFIX)) {
+		return;
+	}
+
+	for (const network of store.state.networks) {
+		for (const chan of network.channels) {
+			if (
+				draftKey(network.uuid, chan) === e.key &&
+				chan.pendingMessage === (e.oldValue || "")
+			) {
+				chan.pendingMessage = e.newValue || "";
+			}
+		}
+	}
+});
+
 socket.on("init", async function (data) {
 	socket.emit("window:visible", isWindowVisible());
 
 	store.commit("networks", mergeNetworkData(data.networks));
+	drafts.prune(store.state.networks);
 	store.commit("isConnected", true);
 	store.commit("currentUserVisibleError", null);
 
@@ -80,7 +100,7 @@ function mergeNetworkData(newNetworks: SharedNetwork[]): ClientNetwork[] {
 		if (!currentNetwork) {
 			const newNet: ClientNetwork = {
 				...sharedNet,
-				channels: sharedNet.channels.map(toClientChan),
+				channels: sharedNet.channels.map((c) => toClientChan(c, sharedNet.uuid)),
 				isJoinChannelShown: false,
 				isCollapsed: collapsedNetworks.has(sharedNet.uuid),
 			};
@@ -98,6 +118,7 @@ function mergeNetworkData(newNetworks: SharedNetwork[]): ClientNetwork[] {
 			// Channels require extra care to be merged correctly
 			if (key === "channels") {
 				currentNetwork.channels = mergeChannelData(
+					sharedNet.uuid,
 					currentNetwork.channels,
 					sharedNet.channels
 				);
@@ -113,6 +134,7 @@ function mergeNetworkData(newNetworks: SharedNetwork[]): ClientNetwork[] {
 }
 
 function mergeChannelData(
+	networkUuid: string,
 	oldChannels: ClientChan[],
 	newChannels: SharedNetworkChan[]
 ): ClientChan[] {
@@ -123,7 +145,16 @@ function mergeChannelData(
 
 		if (!currentChannel) {
 			// This is a new channel that was joined while client was disconnected, initialize it
-			const current = toClientChan(newChannel);
+			const current = toClientChan(newChannel, networkUuid);
+			// Channel ids change when the server restarts, keep text typed since
+			const sameName = oldChannels.find(
+				(chan) => draftKey(networkUuid, chan) === draftKey(networkUuid, newChannel)
+			);
+
+			if (sameName?.pendingMessage) {
+				current.pendingMessage = sameName.pendingMessage;
+			}
+
 			result.push(current);
 			emitNamesOrMarkUsersOudated(current); // TODO: this should not carry logic like that
 			continue;
@@ -161,6 +192,10 @@ function mergeChannelData(
 			}
 
 			currentChannel[key] = newChannel[key];
+		}
+
+		if (!currentChannel.pendingMessage) {
+			currentChannel.pendingMessage = drafts.load(networkUuid, currentChannel);
 		}
 
 		result.push(currentChannel);

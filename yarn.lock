@@ -3078,12 +3078,21 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/node@npm:*, @types/node@npm:24.10.1, @types/node@npm:>=10.0.0":
+"@types/node@npm:*, @types/node@npm:>=10.0.0":
   version: 24.10.1
   resolution: "@types/node@npm:24.10.1"
   dependencies:
     undici-types: "npm:~7.16.0"
   checksum: 10c0/d6bca7a78f550fbb376f236f92b405d676003a8a09a1b411f55920ef34286ee3ee51f566203920e835478784df52662b5b2af89159d9d319352e9ea21801c002
+  languageName: node
+  linkType: hard
+
+"@types/node@npm:24.19.2":
+  version: 24.19.2
+  resolution: "@types/node@npm:24.19.2"
+  dependencies:
+    undici-types: "npm:>=7.24.0 <7.24.7"
+  checksum: 10c0/b51a7f8854007ad579dffdd0633d8addbfeb2c97cceb380f2eba0ed163638ec52e17565385a6cc04d54ac4ff99c70c64aee68a4ca45b6128c035e828794e29c5
   languageName: node
   linkType: hard
 
@@ -6196,9 +6205,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"fork-ts-checker-webpack-plugin@npm:9.1.0":
-  version: 9.1.0
-  resolution: "fork-ts-checker-webpack-plugin@npm:9.1.0"
+"fork-ts-checker-webpack-plugin@npm:9.1.1":
+  version: 9.1.1
+  resolution: "fork-ts-checker-webpack-plugin@npm:9.1.1"
   dependencies:
     "@babel/code-frame": "npm:^7.16.7"
     chalk: "npm:^4.1.2"
@@ -6215,7 +6224,7 @@ __metadata:
   peerDependencies:
     typescript: ">3.6.0"
     webpack: ^5.11.0
-  checksum: 10c0/b4acdf400862af5f57d3e159b3a444e7f9f73e9f4609d54604c3810f75f8adcea0165a8b17ee856ed3c65591d058ffd73cd08d273e289d4952844e75f6efa85d
+  checksum: 10c0/6ad8f4e1b0163284e60259390b18cd301213b85213216c9836a33340b43629edad0fbdeb772ca599bbe4e44dbed90846929b7792c7d0d121fb5b5727fae98c70
   languageName: node
   linkType: hard
 
@@ -8279,10 +8288,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"node-forge@npm:1.4.3":
-  version: 1.4.3
-  resolution: "node-forge@npm:1.4.3"
-  checksum: 10c0/02202bf144dfb6f9662c21a2fdbc6251cb1e8b6dd7e4016d2bb8c996fb61a46383f7426503e06e3f15014d1b8a3215c32ee5cf22e5023ecd8e6d88b6a41dada0
+"node-forge@npm:1.4.4":
+  version: 1.4.4
+  resolution: "node-forge@npm:1.4.4"
+  checksum: 10c0/91916e521451b6d4b469213a8f17900d42cb13d49063a8401b6cf5456a4aec973917d8f41ee84edcf55b8f7f0ad77ba1852c01e3de59e023a2e1318f3973531f
   languageName: node
   linkType: hard
 
@@ -10757,7 +10766,7 @@ __metadata:
     "@types/lodash": "npm:4.17.27"
     "@types/mocha": "npm:^10.0.10"
     "@types/mousetrap": "npm:1.6.15"
-    "@types/node": "npm:24.10.1"
+    "@types/node": "npm:24.19.2"
     "@types/read": "npm:0.0.32"
     "@types/semver": "npm:7.8.0"
     "@types/sinon": "npm:^22.0.2"
@@ -10793,7 +10802,7 @@ __metadata:
     express: "npm:5.3.0"
     file-type: "npm:21.3.4"
     filenamify: "npm:7.0.3"
-    fork-ts-checker-webpack-plugin: "npm:9.1.0"
+    fork-ts-checker-webpack-plugin: "npm:9.1.1"
     fuzzy: "npm:0.1.3"
     global-jsdom: "npm:31.0.0"
     globals: "npm:16.5.0"
@@ -10806,7 +10815,7 @@ __metadata:
     mini-css-extract-plugin: "npm:2.10.2"
     mocha: "npm:^11.7.5"
     mousetrap: "npm:1.6.5"
-    node-forge: "npm:1.4.3"
+    node-forge: "npm:1.4.4"
     normalize.css: "npm:8.0.1"
     npm-run-all: "npm:4.1.5"
     nyc: "npm:17.1.0"
@@ -11178,6 +11187,13 @@ __metadata:
   version: 0.3.0
   resolution: "undate@npm:0.3.0"
   checksum: 10c0/eb857a29d25edaa861e338f16f67e448e0ffc8cd31bce2a9f18101f2a8012564e7e7c02958eb0de27882b66703a757d1650f5e828296f546f060bb96ca4998bb
+  languageName: node
+  linkType: hard
+
+"undici-types@npm:>=7.24.0 <7.24.7":
+  version: 7.24.6
+  resolution: "undici-types@npm:7.24.6"
+  checksum: 10c0/d9cd8befb643ac904615c280a095ba4240531f6bb4a5e75a22a7483630ca8d3f1016d2ab6ace6ceda1f63b3a2db2fe037fafe121d6917a0187573aa548ff78ca
   languageName: node
   linkType: hard
 

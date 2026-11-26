@@ -19,7 +19,13 @@
 						Test disk
 					</button>
 					<button class="btn btn-small" :disabled="!report" @click="copy">
-						{{ copied ? "Copied" : "Copy report" }}
+						{{
+							copied === "done"
+								? "Copied"
+								: copied === "failed"
+									? "Copy the selected text"
+									: "Copy report"
+						}}
 					</button>
 					<span
 						class="tooltipped tooltipped-e tooltipped-no-delay"
@@ -272,6 +278,7 @@ import socket from "../../js/socket";
 import {useStore} from "../../js/store";
 import SidebarToggle from "../SidebarToggle.vue";
 import friendlysize from "../../js/helpers/friendlysize";
+import copyText from "../../js/helpers/copyText";
 import {
 	BrowserDiagnostics,
 	browserSearchSummary,
@@ -297,7 +304,7 @@ export default defineComponent({
 		const data = ref<Diagnostics | null>(null);
 		const browser = ref<BrowserDiagnostics | null>(null);
 		const loading = ref(false);
-		const copied = ref(false);
+		const copied = ref<"no" | "done" | "failed">("no");
 		let sentAt = 0;
 
 		const onDiagnostics = (received: Diagnostics) => {
@@ -315,7 +322,7 @@ export default defineComponent({
 
 		const refresh = (disk: boolean) => {
 			loading.value = true;
-			copied.value = false;
+			copied.value = "no";
 			sentAt = performance.now();
 			socket.emit("diagnostics", {disk});
 		};
@@ -333,17 +340,18 @@ export default defineComponent({
 		);
 
 		const copy = async () => {
-			try {
-				await navigator.clipboard.writeText(report.value);
-				copied.value = true;
-			} catch {
-				// Not available over plain http: select the text to copy by hand
-				const pre = document.querySelector(".diagnostics-report");
-				const selection = window.getSelection();
+			if (await copyText(report.value)) {
+				copied.value = "done";
+				return;
+			}
 
-				if (pre && selection) {
-					selection.selectAllChildren(pre);
-				}
+			// Neither way works here: select the report to copy by hand
+			copied.value = "failed";
+			const pre = document.querySelector(".diagnostics-report");
+			const selection = window.getSelection();
+
+			if (pre && selection) {
+				selection.selectAllChildren(pre);
 			}
 		};
 

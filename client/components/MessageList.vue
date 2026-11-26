@@ -110,6 +110,13 @@ const TOUCH_MOMENTUM_MS = 1500;
 // user again until this much later, so one swipe can't chain page after page
 const AUTO_LOAD_COOLDOWN_MS = 1000;
 
+// Scrolling up asks for the next page of older history while this many
+// entries are still above the rendered window, or, with the oldest loaded
+// entry rendered, this many screens above the view. The page is then
+// usually there before the top is reached.
+const PREFETCH_ENTRIES = 150;
+const PREFETCH_SCREENS = 2;
+
 export default defineComponent({
 	name: "MessageList",
 	components: {
@@ -701,15 +708,53 @@ export default defineComponent({
 			void nextTick().then(() => jumpTo(target, false));
 		};
 
+		// Load more from server
+		const onShowMoreClick = () => {
+			// The button is only disabled once the page re-renders, a second
+			// press before that would ask for the same page again
+			if (!store.state.isConnected || props.channel.historyLoading) return;
+
+			requestHistory(props.channel.messages.find((message) => !message.showInActive));
+		};
+
+		// Where the list was at the last scroll event, to tell which way it moved
+		let lastScrollTop = 0;
+
+		// Asks for older history before the user reaches the top, see
+		// PREFETCH_ENTRIES. Only while they scroll up themselves, and not
+		// within the cooldown after a page: a page added above a coasting
+		// touch scroll can take over the view (see setScrollTop).
+		const prefetchOlder = (distanceFromTop: number, clientHeight: number) => {
+			if (
+				!props.channel.moreHistoryAvailable ||
+				props.channel.historyLoading ||
+				Date.now() - olderPageArrivedAt < AUTO_LOAD_COOLDOWN_MS
+			) {
+				return;
+			}
+
+			const near =
+				windowStartIndex.value > 0
+					? windowStartIndex.value < PREFETCH_ENTRIES
+					: distanceFromTop < clientHeight * PREFETCH_SCREENS;
+
+			if (near) {
+				onShowMoreClick();
+			}
+		};
+
 		// Handle scroll events - triggers window shifting when near edges
 		const handleScroll = () => {
+			const el = chat.value;
+			if (!el) return;
+
+			const scrolledUp = el.scrollTop < lastScrollTop;
+			lastScrollTop = el.scrollTop;
+
 			// Skip if we're doing a programmatic scroll or adjusting the window
 			if (isScrolling.value || isAdjustingWindow.value || jumping.value) {
 				return;
 			}
-
-			const el = chat.value;
-			if (!el) return;
 
 			const scrollTop = el.scrollTop;
 			const scrollHeight = el.scrollHeight;
@@ -734,6 +779,10 @@ export default defineComponent({
 				props.channel.scrolledToBottom = false;
 			}
 
+			if (scrolledUp && performance.now() - userScrolledAt < USER_SCROLL_MS) {
+				prefetchOlder(distanceFromTop, clientHeight);
+			}
+
 			// Dynamic window shifting - shift when user scrolls near edges
 			// Shift up (load older) when near top and there are more messages above
 			if (distanceFromTop < SCROLL_THRESHOLD && canScrollBack.value) {
@@ -743,15 +792,6 @@ export default defineComponent({
 			else if (distanceFromBottom < SCROLL_THRESHOLD && !isAtEnd.value) {
 				void shiftWindowDown(50);
 			}
-		};
-
-		// Load more from server
-		const onShowMoreClick = () => {
-			// The button is only disabled once the page re-renders, a second
-			// press before that would ask for the same page again
-			if (!store.state.isConnected || props.channel.historyLoading) return;
-
-			requestHistory(props.channel.messages.find((message) => !message.showInActive));
 		};
 
 		// Extend a slice of old history towards the present

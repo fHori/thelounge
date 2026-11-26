@@ -181,15 +181,27 @@ export default defineComponent({
 		const store = useStore();
 		const isOpen = ref(false);
 		const isLoading = ref(false);
+		// Newest first, with their channels. Copies: writing into the
+		// mentions in the store from here would run this again.
 		const resolvedMessages = computed(() => {
-			const messages = store.state.mentions.slice().reverse();
+			const channels = new Map<number, ClientMention["channel"]>();
+			const resolved: ClientMention[] = [];
 
-			for (const message of messages) {
-				message.localetime = localetime(message.time);
-				message.channel = store.getters.findChannel(message.chanId);
+			for (let i = store.state.mentions.length - 1; i >= 0; i--) {
+				const mention = store.state.mentions[i];
+
+				if (!channels.has(mention.chanId)) {
+					channels.set(mention.chanId, store.getters.findChannel(mention.chanId));
+				}
+
+				const channel = channels.get(mention.chanId) ?? null;
+
+				if (!channel?.channel.muted) {
+					resolved.push({...mention, localetime: localetime(mention.time), channel});
+				}
 			}
 
-			return messages.filter((message) => !message.channel?.channel.muted);
+			return resolved;
 		});
 
 		watch(

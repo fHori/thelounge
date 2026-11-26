@@ -4,11 +4,12 @@ import {ActionContext, createStore, Store, useStore as baseUseStore} from "vuex"
 import {createSettingsStore} from "./store-settings";
 import storage from "./localStorage";
 import type {ClientChan, ClientNetwork, NetChan, ClientMention, ClientMessage} from "./types";
-import type {InjectionKey} from "vue";
+import {markRaw, type InjectionKey} from "vue";
 
 import {SettingsState} from "./settings";
 import type {SearchCursor} from "../../shared/types/storage";
 import mergeSearchResults from "./helpers/mergeSearchResults";
+import {markMsgsRaw} from "./chan";
 import {SharedConfiguration, LockedSharedConfiguration} from "../../shared/types/config";
 
 const appName = document.title;
@@ -321,9 +322,17 @@ const mutations: Mutations = {
 		state.messageSearchResults = value;
 	},
 	addMessageSearchResults(state, value) {
-		state.messageSearchResults = {
-			results: mergeSearchResults(state.messageSearchResults?.results ?? [], value ?? []),
-		};
+		const shown = state.messageSearchResults?.results ?? [];
+		const results = mergeSearchResults(shown, markMsgsRaw(value ?? []));
+
+		if (results === shown && state.messageSearchResults) {
+			return;
+		}
+
+		// Results don't change once found, so neither the list nor the
+		// messages in it are made reactive: a new list replaces the old one
+		// (see markMsgRaw for the messages)
+		state.messageSearchResults = markRaw({results: markRaw(results)});
 	},
 };
 

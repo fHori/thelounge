@@ -125,7 +125,7 @@
     "cssnano": "9.9.0",
     "dayjs": "1.11.23",
     "emoji-regex": "11.0.0",
-    "eslint": "9.39.1",
+    "eslint": "10.15.0",
     "eslint-config-prettier": "10.1.8",
     "eslint-plugin-vue": "10.12.1",
     "fork-ts-checker-webpack-plugin": "9.1.0",

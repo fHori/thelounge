@@ -15,7 +15,11 @@
   "compilerOptions": {
     /* Only type-checked (tsc --noEmit), never built or referenced */
     "composite": false,
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
+    // As in client/tsconfig.json: vuex declares its types outside "exports"
+    "resolvePackageJsonExports": false,
+    // Mocha's globals, and what the client code it checks needs
+    "types": ["mocha", "node", "webpack-env"],
     "jsx": "preserve" /* Specify what JSX code is generated. */,
 
     // TODO: Remove eventually

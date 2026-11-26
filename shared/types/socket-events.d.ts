@@ -21,7 +21,7 @@ type NoPayloadEventHandler = EventHandler<void>;
 
 interface ServerToClientEvents {
 	"auth:start": (serverHash: number) => void;
-	"auth:failed": NoPayloadEventHandler;
+	"auth:failed": (data?: {retryAfter: number}) => void;
 	"auth:success": NoPayloadEventHandler;
 
 	"upload:auth": (token: string) => void;

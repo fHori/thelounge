@@ -46,7 +46,12 @@
 				</RevealPassword>
 			</div>
 
-			<div v-if="errorShown" class="error">Authentication failed.</div>
+			<div v-if="errorShown" class="error">
+				<template v-if="retryAfter"
+					>Too many attempts. Try again in {{ retryAfter }}s.</template
+				>
+				<template v-else>Authentication failed.</template>
+			</div>
 
 			<button :disabled="inFlight" type="submit" class="btn">Sign in</button>
 		</form>
@@ -67,13 +72,15 @@ export default defineComponent({
 	setup() {
 		const inFlight = ref(false);
 		const errorShown = ref(false);
+		const retryAfter = ref(0);
 
 		const username = ref(storage.get("user") || "");
 		const password = ref("");
 
-		const onAuthFailed = () => {
+		const onAuthFailed = (data?: {retryAfter: number}) => {
 			inFlight.value = false;
 			errorShown.value = true;
+			retryAfter.value = data?.retryAfter ?? 0;
 		};
 
 		const onSubmit = (event: Event) => {
@@ -107,6 +114,7 @@ export default defineComponent({
 		return {
 			inFlight,
 			errorShown,
+			retryAfter,
 			username,
 			password,
 			onSubmit,

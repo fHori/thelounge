@@ -243,7 +243,7 @@ describe("release notes", function () {
 		expect(body).to.include("## Other changes\n\n- Fix a thing\n");
 	});
 
-	it("credits pull requests from other people, without pinging them", function () {
+	it("credits pull requests from other people", function () {
 		const body = N.render({
 			version: "2026.12.0",
 			image: "img",
@@ -279,13 +279,14 @@ describe("release notes", function () {
 		});
 
 		expect(body).to.include(
-			"- Sync read state with ircv3 draft/read-marker by [B4reMetal](https://github.com/B4reMetal) ([#108](https://github.com/fHori/thelounge/pull/108))"
+			"- Sync read state with ircv3 draft/read-marker by @B4reMetal ([#108](https://github.com/fHori/thelounge/pull/108))"
 		);
 		expect(body).to.include("- Mine ([#96](https://github.com/fHori/thelounge/pull/96))");
 		expect(body).to.include(
 			"- Bump a thing ([#97](https://github.com/fHori/thelounge/pull/97))"
 		);
-		expect(body).not.to.include("@");
+		// The only mention: the credit, none from the owner or bots
+		expect(body.match(/@\w/g)).to.have.lengthOf(1);
 	});
 
 	it("picks the pull request a squash merge came from", function () {

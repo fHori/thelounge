@@ -134,8 +134,9 @@ export function render({version, commits, storageChanged, image, repository = SC
 
 		if (r) {
 			const link = r.pr ? ` ([#${r.pr}](https://github.com/${repository}/pull/${r.pr}))` : "";
-			// A link to their profile, not an @mention: credit without a notification
-			const credit = r.author ? ` by [${r.author}](https://github.com/${r.author})` : "";
+			// Merged into this repository, so the mention is ours to make: it
+			// credits them, and GitHub lists them as a contributor to the release
+			const credit = r.author ? ` by @${r.author}` : "";
 			groups.set(r.group, [...(groups.get(r.group) ?? []), r.title + credit + link]);
 		}
 	}

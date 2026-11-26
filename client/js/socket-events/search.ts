@@ -1,5 +1,6 @@
 import socket from "../socket";
 import {store} from "../store";
+import {searchAnswered} from "../searchTiming";
 
 socket.on("search:results", (response) => {
 	const pendingQuery = store.state.messageSearchPendingQuery;
@@ -18,6 +19,7 @@ socket.on("search:results", (response) => {
 	}
 
 	store.commit("messageSearchPendingQuery", null);
+	searchAnswered(response.results.length, response.offset);
 
 	if (store.state.messageSearchResults) {
 		store.commit("addMessageSearchResults", response);

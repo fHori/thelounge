@@ -68,6 +68,36 @@ async function shutdown() {
 	await Promise.allSettled(Array.from(closing));
 }
 
+// A search, with how it went
+async function searchWithStats(store: number, query: SearchQuery) {
+	const storage = get(store);
+	const response = await storage.search(query);
+	return {response, stats: storage.lastSearchStats};
+}
+
+async function diagnostics(store: number, probeDisk: boolean) {
+	const storage = get(store);
+
+	return {
+		database: await storage.databaseStats(),
+		index: storage.searchIndexState(),
+		disk: probeDisk ? await storage.probeDisk() : undefined,
+	};
+}
+
+// The whole thread, every user's database together
+function threadStats() {
+	let buildingIndex = 0;
+
+	for (const {storage} of stores.values()) {
+		if (storage.isEnabled && !storage.searchIndexReady) {
+			buildingIndex++;
+		}
+	}
+
+	return {stores: stores.size, buildingIndex};
+}
+
 const methods = {
 	open,
 	close,
@@ -79,6 +109,10 @@ const methods = {
 		get(store).getChannelHistory(networkUuid, channelName, limit),
 	getMaxMessageId: (store: number) => get(store).getMaxMessageId(),
 	search: (store: number, query: SearchQuery) => get(store).search(query),
+	searchWithStats,
+	ping: () => undefined,
+	threadStats,
+	diagnostics,
 	getMessagesBefore: (
 		store: number,
 		...args: Parameters<SqliteMessageStorage["getMessagesBefore"]>

@@ -77,6 +77,11 @@
 					>
 				</p>
 				<p>
+					<router-link to="/diagnostics" class="diagnostics-link"
+						>Diagnostics</router-link
+					>
+				</p>
+				<p>
 					<a
 						href="https://github.com/fHori/thelounge/issues/new/choose"
 						target="_blank"

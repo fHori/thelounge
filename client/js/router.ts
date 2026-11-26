@@ -6,6 +6,7 @@ import Connect from "../components/Windows/Connect.vue";
 import Settings from "../components/Windows/Settings.vue";
 import Help from "../components/Windows/Help.vue";
 import Changelog from "../components/Windows/Changelog.vue";
+import Diagnostics from "../components/Windows/Diagnostics.vue";
 import NetworkEdit from "../components/Windows/NetworkEdit.vue";
 import SearchResults from "../components/Windows/SearchResults.vue";
 import RoutedChat from "../components/RoutedChat.vue";
@@ -92,6 +93,11 @@ const router = createRouter({
 			name: "Changelog",
 			path: "/changelog",
 			component: Changelog,
+		},
+		{
+			name: "Diagnostics",
+			path: "/diagnostics",
+			component: Diagnostics,
 		},
 		{
 			name: "NetworkEdit",

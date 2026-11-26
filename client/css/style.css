@@ -278,6 +278,7 @@ p {
 #loading pre,
 #help .container,
 #changelog .container,
+#diagnostics .container,
 .header .title,
 .header .topic,
 #chat .messages {
@@ -317,6 +318,7 @@ p {
 #chat .count::before,
 #connect .extra-help,
 #settings .extra-help,
+#diagnostics .extra-help,
 #settings #play::before,
 #settings .settings-menu .icon::before,
 #form #upload::before,
@@ -357,6 +359,7 @@ p {
 #help .website-link::before,
 #help .documentation-link::before,
 #help .report-issue-link::before,
+#help .diagnostics-link::before,
 #image-viewer .previous-image-btn::before,
 #image-viewer .next-image-btn::before,
 #image-viewer .open-btn::before,
@@ -935,7 +938,8 @@ p {
 
 #help .website-link::before,
 #help .documentation-link::before,
-#help .report-issue-link::before {
+#help .report-issue-link::before,
+#help .diagnostics-link::before {
 	display: inline-block;
 	margin-right: 5px;
 
@@ -960,6 +964,12 @@ p {
 	content: "\f188";
 
 	/* http://fontawesome.io/icon/bug/ */
+}
+
+#help .diagnostics-link::before {
+	content: "\f0f1";
+
+	/* https://fontawesome.com/icons/stethoscope?style=solid */
 }
 
 #chat .msg[data-type="invite"] .from::before {
@@ -1148,7 +1158,8 @@ p {
 }
 
 #connect .extra-help::before,
-#settings .extra-help::before {
+#settings .extra-help::before,
+#diagnostics .extra-help::before {
 	content: "\f059";
 
 	/* http://fontawesome.io/icon/question-circle/ */
@@ -2743,7 +2754,8 @@ part/quit messages where we don't load previews (adds a blank line otherwise) */
 }
 
 #connect .extra-help,
-#settings .extra-help {
+#settings .extra-help,
+#diagnostics .extra-help {
 	cursor: help;
 }
 
@@ -2890,6 +2902,56 @@ part/quit messages where we don't load previews (adds a blank line otherwise) */
 	color: var(--window-heading-color);
 	margin: 30px 0 10px;
 	padding-bottom: 7px;
+}
+
+#diagnostics .diagnostics-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+#diagnostics .diagnostics-actions .btn {
+	margin: 0;
+}
+
+#diagnostics .diagnostics-table {
+	border-collapse: collapse;
+	margin-bottom: 10px;
+}
+
+#diagnostics .diagnostics-table th,
+#diagnostics .diagnostics-table td {
+	padding: 3px 16px 3px 0;
+	text-align: left;
+	vertical-align: top;
+}
+
+#diagnostics .diagnostics-table th {
+	font-weight: normal;
+	color: var(--body-color-muted);
+	white-space: nowrap;
+}
+
+#diagnostics .diagnostics-searches th,
+#diagnostics .diagnostics-searches td {
+	white-space: nowrap;
+}
+
+#diagnostics .diagnostics-searches {
+	display: block;
+	overflow-x: auto;
+}
+
+#diagnostics .diagnostics-bad {
+	color: #e74c3c;
+}
+
+#diagnostics .diagnostics-report {
+	white-space: pre-wrap;
+	word-break: break-word;
+	font-size: 12px;
 }
 
 .window#chat-container {

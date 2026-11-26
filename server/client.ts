@@ -27,7 +27,13 @@ import Network, {
 import ClientManager from "./clientManager.js";
 import {MessageStorage, MessageProvider} from "./plugins/messageStorage/types.js";
 import {StorageCleaner} from "./storageCleaner.js";
-import {SearchQuery, SearchResponse} from "../shared/types/storage.js";
+import {
+	Diagnostics,
+	SearchQuery,
+	SearchResponse,
+	StorageDiagnostics,
+} from "../shared/types/storage.js";
+import {serverDiagnostics, userDiagnostics, scrub} from "./diagnostics.js";
 import {SharedChan, ChanType} from "../shared/types/chan.js";
 import {SharedNetwork} from "../shared/types/network.js";
 import {ServerToClientEvents} from "../shared/types/socket-events.js";
@@ -856,6 +862,36 @@ class Client {
 		for (const messageStorage of this.messageStorage) {
 			messageStorage.deleteChannel(target.network, target.chan).catch((e) => log.error(e));
 		}
+	}
+
+	/**
+	 * What could explain the server being slow for this user, search above
+	 * all: the server and its disk, the search index, the database, the
+	 * storage thread and the last searches. Nothing that identifies anyone.
+	 */
+	async diagnostics(probeDisk: boolean): Promise<Diagnostics> {
+		let storage: StorageDiagnostics;
+
+		if (!(this.messageProvider instanceof ThreadedSqliteMessageStorage)) {
+			storage = {storage: "none", open: false, searches: []};
+		} else {
+			try {
+				storage = await this.messageProvider.diagnostics(probeDisk);
+			} catch (err) {
+				storage = {
+					storage: "sqlite",
+					open: false,
+					error: scrub(String(err), this.name),
+					searches: [],
+				};
+			}
+		}
+
+		if (storage.index?.error) {
+			storage.index.error = scrub(storage.index.error, this.name);
+		}
+
+		return {server: serverDiagnostics(), user: userDiagnostics(this), storage};
 	}
 
 	async search(query: SearchQuery): Promise<SearchResponse> {

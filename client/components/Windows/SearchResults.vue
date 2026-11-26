@@ -107,6 +107,7 @@
 
 <script lang="ts">
 import socket from "../../js/socket";
+import {searchSent} from "../../js/searchTiming";
 import eventbus from "../../js/eventbus";
 
 import SidebarToggle from "../SidebarToggle.vue";
@@ -219,6 +220,7 @@ export default defineComponent({
 				offset: offset.value,
 			};
 			store.commit("messageSearchPendingQuery", query);
+			searchSent();
 			socket.emit("search", query);
 		};
 
@@ -239,6 +241,7 @@ export default defineComponent({
 				offset: offset.value,
 			};
 			store.commit("messageSearchPendingQuery", query);
+			searchSent();
 			socket.emit("search", query);
 		};
 

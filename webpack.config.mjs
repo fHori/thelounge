@@ -9,6 +9,7 @@ import ForkTsCheckerWebpackPlugin from "fork-ts-checker-webpack-plugin";
 import MiniCssExtractPlugin from "mini-css-extract-plugin";
 import {VueLoaderPlugin} from "vue-loader";
 import babelConfig from "./babel.config.cjs";
+import postcssConfig from "./postcss.config.js";
 
 const {DefinePlugin, NormalModuleReplacementPlugin} = webpack;
 
@@ -178,6 +179,11 @@ function createBaseConfig(mode, isProduction) {
 							loader: "postcss-loader",
 							options: {
 								sourceMap: true,
+								// The plugins from postcss.config.js, imported here rather
+								// than found by postcss-loader: it would require() them,
+								// and under tsx (yarn dev) that breaks cssnano, an ES
+								// module importing a CommonJS one
+								postcssOptions: {...postcssConfig, config: false},
 							},
 						},
 					],

@@ -103,6 +103,7 @@ export type ConfigType = {
 	port: number;
 	bind: string | undefined;
 	reverseProxy: boolean;
+	loginThrottle: LoginThrottleOptions;
 	maxHistory: number;
 	https: Https;
 	theme: string;
@@ -133,6 +134,7 @@ export type ConfigType = {
 };
 
 import defaultConfig from "../defaults/config.js";
+import type {LoginThrottleOptions} from "./login-throttle.js";
 
 class Config {
 	values = {..._.cloneDeep(defaultConfig), themeColor: ""} as unknown as ConfigType;

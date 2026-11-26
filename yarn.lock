@@ -4184,10 +4184,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"chalk@npm:5.6.2":
-  version: 5.6.2
-  resolution: "chalk@npm:5.6.2"
-  checksum: 10c0/99a4b0f0e7991796b1e7e3f52dceb9137cae2a9dfc8fc0784a550dc4c558e15ab32ed70b14b21b52beb2679b4892b41a0aa44249bcb996f01e125d58477c6976
+"chalk@npm:6.0.1":
+  version: 6.0.1
+  resolution: "chalk@npm:6.0.1"
+  checksum: 10c0/4c58238fa874f531b5201bf99ebd374742be31f8e306c7783d930856aec305f2dea3e07531a8805b2a7ba92807296e39ced52e9f673703e0264d96e83998a429
   languageName: node
   linkType: hard
 
@@ -10563,7 +10563,7 @@ __metadata:
     bcryptjs: "npm:3.0.3"
     better-sqlite3: "npm:12.4.1"
     chai: "npm:6.3.0"
-    chalk: "npm:5.6.2"
+    chalk: "npm:6.0.1"
     cheerio: "npm:1.2.0"
     commander: "npm:14.0.2"
     content-disposition: "npm:0.5.4"

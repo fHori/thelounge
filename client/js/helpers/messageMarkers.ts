@@ -17,14 +17,23 @@ export function startsNewDay(entries: Entry[], index: number): boolean {
 		return true;
 	}
 
-	const oldDate = new Date(previous.time);
-	const newDate = new Date(entries[index].time);
+	return dayOf(previous) !== dayOf(entries[index]);
+}
 
-	return (
-		oldDate.getDate() !== newDate.getDate() ||
-		oldDate.getMonth() !== newDate.getMonth() ||
-		oldDate.getFullYear() !== newDate.getFullYear()
-	);
+// Each render asks this for every rendered entry, so the day of an entry is
+// worked out once
+const days = new WeakMap<Entry, number>();
+
+function dayOf(entry: Entry): number {
+	let day = days.get(entry);
+
+	if (day === undefined) {
+		const date = new Date(entry.time);
+		day = date.getFullYear() * 10000 + date.getMonth() * 100 + date.getDate();
+		days.set(entry, day);
+	}
+
+	return day;
 }
 
 /**

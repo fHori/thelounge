@@ -173,7 +173,7 @@ import dayjs from "dayjs";
 
 import constants from "../js/constants";
 import eventbus from "../js/eventbus";
-import localetime from "../js/helpers/localetime";
+import {localeFormat} from "../js/helpers/localetime";
 import Username from "./Username.vue";
 import LinkPreview from "./LinkPreview.vue";
 import ParsedMessage from "./ParsedMessage.vue";
@@ -189,6 +189,22 @@ import {ChanType} from "../../shared/types/chan";
 MessageTypes.ParsedMessage = ParsedMessage;
 MessageTypes.LinkPreview = LinkPreview;
 MessageTypes.Username = Username;
+
+// Rows are mounted again whenever the rendered window moves or the channel is
+// opened again, so a message's times are formatted once
+const formattedTimes = new WeakMap<ClientMessage, {format: string; time: string; locale: string}>();
+
+function formattedTime(message: ClientMessage, format: string) {
+	let cached = formattedTimes.get(message);
+
+	if (!cached || cached.format !== format) {
+		const time = dayjs(message.time);
+		cached = {format, time: time.format(format), locale: time.format(localeFormat)};
+		formattedTimes.set(message, cached);
+	}
+
+	return cached;
+}
 
 export default defineComponent({
 	name: "Message",
@@ -219,13 +235,9 @@ export default defineComponent({
 			return constants.timeFormats[format];
 		});
 
-		const messageTime = computed(() => {
-			return dayjs(props.message.time).format(timeFormat.value);
-		});
-
-		const messageTimeLocale = computed(() => {
-			return localetime(props.message.time);
-		});
+		const formatted = computed(() => formattedTime(props.message, timeFormat.value));
+		const messageTime = computed(() => formatted.value.time);
+		const messageTimeLocale = computed(() => formatted.value.locale);
 
 		const messageComponent = computed(() => {
 			return "message-" + (props.message.type || "invalid"); // TODO: force existence of type in sharedmsg

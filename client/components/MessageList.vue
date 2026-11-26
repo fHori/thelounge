@@ -18,31 +18,31 @@
 			aria-relevant="additions"
 			@copy="onCopy"
 		>
-			<template v-for="(message, idx) in displayedMessages" :key="getMessageKey(message)">
+			<template v-for="row in rows" :key="row.key">
 				<DateMarker
-					v-if="shouldDisplayDateMarker(idx)"
-					:message="message as any"
-					:is-focused="isMessageFocused(message)"
+					v-if="row.dateMarker"
+					:message="row.entry as any"
+					:is-focused="row.focused"
 				/>
-				<div v-if="shouldDisplayUnreadMarker(idx)" class="unread-marker">
+				<div v-if="row.unreadMarker" class="unread-marker">
 					<span class="unread-marker-text" />
 				</div>
 
 				<MessageCondensed
-					v-if="message.type === 'condensed'"
+					v-if="row.entry.type === 'condensed'"
 					:network="network"
 					:keep-scroll-position="keepScrollPosition"
-					:messages="message.messages"
-					:is-focused="isMessageFocused(message)"
+					:messages="row.entry.messages"
+					:is-focused="row.focused"
 				/>
 				<Message
 					v-else
 					:channel="channel"
 					:network="network"
-					:message="message"
+					:message="row.entry"
 					:keep-scroll-position="keepScrollPosition"
-					:is-previous-source="isPreviousSource(message, idx)"
-					:is-focused="isMessageFocused(message)"
+					:is-previous-source="row.previousSource"
+					:is-focused="row.focused"
 					@toggle-link-preview="onLinkPreviewToggle"
 				/>
 			</template>
@@ -70,6 +70,11 @@ import clipboard from "../js/clipboard";
 import socket from "../js/socket";
 import {cancelPendingJump, leaveHistorySlice, startPendingJump} from "../js/chan";
 import {startsNewDay, unreadMarkerIndex} from "../js/helpers/messageMarkers";
+import {
+	MessageCondenser,
+	type CondensedMessageContainer,
+	type ListEntry,
+} from "../js/helpers/condense";
 import Message from "./Message.vue";
 import MessageCondensed from "./MessageCondensed.vue";
 import DateMarker from "./DateMarker.vue";
@@ -82,17 +87,11 @@ import {
 	onUnmounted,
 	PropType,
 	ref,
+	toRaw,
 	watch,
 } from "vue";
 import {useStore} from "../js/store";
 import {ClientChan, ClientMessage, ClientNetwork, ClientLinkPreview} from "../js/types";
-
-type CondensedMessageContainer = {
-	type: "condensed";
-	time: Date;
-	messages: ClientMessage[];
-	id?: number;
-};
 
 // Render at most this many messages - keeps DOM manageable
 const MAX_RENDERED_MESSAGES = 500;
@@ -206,8 +205,11 @@ export default defineComponent({
 			});
 		};
 
-		// Build condensed message list (all messages, before windowing)
-		const allCondensedMessages = computed(() => {
+		// Build condensed message list (all messages, before windowing).
+		// Kept between updates: a new message only changes the end of it.
+		const condenser = new MessageCondenser();
+
+		const allCondensedMessages = computed((): ListEntry[] => {
 			if (props.channel.type !== ChanType.CHANNEL && props.channel.type !== ChanType.QUERY) {
 				return props.channel.messages;
 			}
@@ -222,40 +224,13 @@ export default defineComponent({
 				return props.channel.messages;
 			}
 
-			let lastCondensedContainer: CondensedMessageContainer | null = null;
-			const condensed: (ClientMessage | CondensedMessageContainer)[] = [];
+			// Messages are only ever added or dropped at the ends (chan.ts),
+			// so only the ends are watched instead of every entry
+			const messages = props.channel.messages;
+			void messages[0];
+			void messages[messages.length - 1];
 
-			for (const message of props.channel.messages) {
-				if (message.self || message.highlight || !condensedTypes.has(message.type || "")) {
-					lastCondensedContainer = null;
-					condensed.push(message);
-					continue;
-				}
-
-				if (!lastCondensedContainer) {
-					lastCondensedContainer = {
-						time: message.time,
-						type: "condensed",
-						messages: [],
-					};
-					condensed.push(lastCondensedContainer);
-				}
-
-				lastCondensedContainer.messages.push(message);
-				lastCondensedContainer.id = message.id;
-
-				if (message.id === props.channel.firstUnread) {
-					lastCondensedContainer = null;
-				}
-			}
-
-			return condensed.map((message) => {
-				if (message.type === "condensed" && message.messages.length === 1) {
-					return message.messages[0];
-				}
-
-				return message;
-			});
+			return condenser.update(toRaw(messages), props.channel.firstUnread);
 		});
 
 		// Windowed messages for rendering - show MAX_RENDERED_MESSAGES from windowStartIndex
@@ -312,14 +287,23 @@ export default defineComponent({
 			return Boolean(props.channel.historySlice?.hasNewer) && isAtEnd.value;
 		});
 
-		// Helper to get a unique key for each message
-		const getMessageKey = (message: ClientMessage | CondensedMessageContainer) => {
-			if (message.type === "condensed") {
-				return `condensed-${message.messages[0]?.id}-${new Date(message.time).getTime()}`;
+		// Helper to get a unique key for each message. Every render asks for
+		// the key of each rendered entry, so it is worked out once per entry.
+		const messageKeys = new WeakMap<ListEntry, string>();
+
+		const getMessageKey = (message: ListEntry) => {
+			let key = messageKeys.get(message);
+
+			if (key === undefined) {
+				// Use time as part of key since IDs can be inconsistent
+				key =
+					message.type === "condensed"
+						? `condensed-${message.messages[0]?.id}-${new Date(message.time).getTime()}`
+						: `${message.id}-${new Date(message.time).getTime()}`;
+				messageKeys.set(message, key);
 			}
 
-			// Use time as part of key since IDs can be inconsistent
-			return `${message.id}-${new Date(message.time).getTime()}`;
+			return key;
 		};
 
 		const isMessageFocused = (message: ClientMessage | CondensedMessageContainer): boolean => {
@@ -809,17 +793,8 @@ export default defineComponent({
 			socket.emit("messages:after", {target: props.channel.id, afterTime: timeOf(newest)});
 		};
 
-		// `idx` is the index among the rendered entries; markers depend on the
-		// entry before it in the full list, which may not be rendered
-		const shouldDisplayDateMarker = (idx: number) =>
-			startsNewDay(allCondensedMessages.value, renderStart.value + idx);
-
-		const shouldDisplayUnreadMarker = (idx: number) =>
-			renderStart.value + idx === unreadIndex.value;
-
-		const isPreviousSource = (currentMessage: ClientMessage, idx: number) => {
-			const previousMessage = displayedMessages.value[idx - 1];
-			return (
+		const isPreviousSource = (currentMessage: ListEntry, previousMessage?: ListEntry) =>
+			Boolean(
 				previousMessage &&
 				currentMessage.type === MessageType.MESSAGE &&
 				previousMessage.type === MessageType.MESSAGE &&
@@ -827,7 +802,25 @@ export default defineComponent({
 				previousMessage.from &&
 				currentMessage.from.nick === previousMessage.from.nick
 			);
-		};
+
+		// What each rendered row shows, worked out in one go: the template
+		// reads plain fields instead of calling helpers for each row on every
+		// render. Date and unread markers depend on the entry before a row in
+		// the full list, which may not be rendered.
+		const rows = computed(() => {
+			const all = allCondensedMessages.value;
+			const start = renderStart.value;
+			const unread = unreadIndex.value;
+
+			return displayedMessages.value.map((entry, idx, shown) => ({
+				entry,
+				key: getMessageKey(entry),
+				dateMarker: startsNewDay(all, start + idx),
+				unreadMarker: start + idx === unread,
+				previousSource: isPreviousSource(entry, shown[idx - 1]),
+				focused: isMessageFocused(entry),
+			}));
+		});
 
 		const onCopy = () => {
 			if (chat.value) {
@@ -1120,16 +1113,11 @@ export default defineComponent({
 			loadNewerButton,
 			showLoadNewerButton,
 			onShowNewerClick,
-			displayedMessages,
+			rows,
 			showLoadMoreButton,
-			getMessageKey,
-			isMessageFocused,
 			onShowMoreClick,
 			onCopy,
-			shouldDisplayDateMarker,
-			shouldDisplayUnreadMarker,
 			keepScrollPosition,
-			isPreviousSource,
 			jumpToBottom,
 			onLinkPreviewToggle,
 		};

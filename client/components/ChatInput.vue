@@ -65,6 +65,7 @@ import {watch, defineComponent, nextTick, onMounted, PropType, ref, onUnmounted}
 import type {ClientNetwork, ClientChan} from "../js/types";
 import {useStore} from "../js/store";
 import {ChanType} from "../../shared/types/chan";
+import drafts from "../js/drafts";
 
 const formattingHotkeys = {
 	"mod+k": "\x03",
@@ -257,9 +258,13 @@ export default defineComponent({
 		);
 
 		watch(
-			() => props.channel.pendingMessage,
-			() => {
+			() => [props.channel, props.channel.pendingMessage] as const,
+			([channel, text], [previousChannel]) => {
 				setInputSize();
+
+				if (channel === previousChannel) {
+					drafts.save(props.network.uuid, channel, text);
+				}
 			}
 		);
 

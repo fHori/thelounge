@@ -24,23 +24,29 @@ const localAuth: AuthHandler = (_manager, client, user, password, callback) => {
 		.compare(password, client.config.password)
 		.then((matching) => {
 			if (matching && Helper.password.requiresUpdate(client.config.password)) {
-				const hash = Helper.password.hash(password);
-
-				client.setPassword(hash, (success) => {
-					if (success) {
-						log.info(
-							`User ${colors.bold(
-								client.name
-							)} logged in and their hashed password has been updated to match new security requirements`
-						);
-					}
-				});
+				Helper.password
+					.hash(password)
+					.then((hash) => {
+						client.setPassword(hash, (success) => {
+							if (success) {
+								log.info(
+									`User ${colors.bold(
+										client.name
+									)} logged in and their hashed password has been updated to match new security requirements`
+								);
+							}
+						});
+					})
+					.catch((error) => {
+						log.error(`Error while updating users password hash. Error: ${error}`);
+					});
 			}
 
 			callback(matching);
 		})
 		.catch((error) => {
 			log.error(`Error while checking users password. Error: ${error}`);
+			callback(false);
 		});
 };
 

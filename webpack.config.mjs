@@ -110,9 +110,12 @@ class PrecompressPlugin {
 	}
 }
 
+// Component tests pull scoped styles into the test chunk too; give its CSS
+// its own file so it doesn't collide with the app's stylesheet
 const createMiniCssExtractPlugin = () =>
 	new MiniCssExtractPlugin({
-		filename: "css/style.css",
+		filename: ({chunk}) =>
+			chunk?.name === "testclient.cjs" ? "css/testclient.css" : "css/style.css",
 		chunkFilename: "css/chunk.[contenthash:8].css",
 	});
 
@@ -329,7 +332,7 @@ function applyDevelopmentOverrides(config) {
 		new CopyPlugin({patterns: copyPatterns(false)}),
 		new NormalModuleReplacementPlugin(
 			/js(\/|\\)socket\.[jt]s$/,
-			resolveFromRoot("scripts/noop.js")
+			resolveFromRoot("test/client/socketStub.js")
 		),
 	];
 

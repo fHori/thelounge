@@ -3,7 +3,13 @@ import _ from "lodash";
 import path from "node:path";
 import os from "node:os";
 import net from "node:net";
-import bcrypt from "bcryptjs";
+import {
+	passwordCompare,
+	passwordHash,
+	passwordHashSync,
+	passwordRequiresUpdate,
+} from "./password.js";
+import crypto from "node:crypto";
 import {execSync} from "node:child_process";
 
 export type Hostmask = {
@@ -26,6 +32,7 @@ const Helper = {
 
 	password: {
 		hash: passwordHash,
+		hashSync: passwordHashSync,
 		compare: passwordCompare,
 		requiresUpdate: passwordRequiresUpdate,
 	},
@@ -109,18 +116,6 @@ function expandHome(shortenedPath: string | undefined) {
 	return path.resolve(
 		shortenedPath.replace(/^~($|\/|\\)/, (_match, sep: string) => os.homedir() + sep)
 	);
-}
-
-function passwordRequiresUpdate(password: string) {
-	return bcrypt.getRounds(password) !== 11;
-}
-
-function passwordHash(password: string) {
-	return bcrypt.hashSync(password, bcrypt.genSaltSync(11));
-}
-
-function passwordCompare(password: string, expected: string) {
-	return bcrypt.compare(password, expected);
 }
 
 function parseHostmask(hostmask: string): Hostmask {

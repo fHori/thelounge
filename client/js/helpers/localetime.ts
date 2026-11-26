@@ -1,3 +1,5 @@
 import dayjs from "dayjs";
 
-export default (time: Date | number) => dayjs(time).format("D MMMM YYYY, HH:mm:ss");
+export const localeFormat = "D MMMM YYYY, HH:mm:ss";
+
+export default (time: Date | number) => dayjs(time).format(localeFormat);

@@ -1,6 +1,7 @@
 import socket from "../socket";
 import {store} from "../store";
 import {switchToChannel} from "../router";
+import drafts from "../drafts";
 
 socket.on("part", async function (data) {
 	// When parting from the active channel/query, jump to the network's lobby
@@ -16,6 +17,7 @@ socket.on("part", async function (data) {
 
 	const index = channel.network.channels.findIndex((c) => c.id === data.chan);
 	channel.network.channels.splice(index, 1);
+	drafts.remove(channel.network.uuid, channel.channel);
 
 	await store.dispatch("partChannel", channel);
 });

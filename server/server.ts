@@ -36,6 +36,7 @@ import type {
 import {ChanType} from "../shared/types/chan.js";
 import type {SearchResultsChunk} from "../shared/types/storage.js";
 import {isSearchCursor} from "./searchCursor.js";
+import {LoginThrottle, ipKey, userKey} from "./login-throttle.js";
 import {getCacheBust, precompressed, setStaticHeaders} from "./staticAssets.js";
 import {setBrowserVisible} from "./plugins/readMarker.js";
 import {
@@ -45,6 +46,7 @@ import {
 	LockedConfigNetDefaults,
 } from "../shared/types/config.js";
 import {userTrackerLimits, userTrackersSetting} from "../shared/trackers.js";
+import {serverOwnedSettings} from "../shared/settings.js";
 
 type ServerOptions = {
 	dev: boolean;
@@ -76,6 +78,7 @@ export type ServerInstance = {
 const serverHash = Math.floor(Date.now() * Math.random());
 
 let manager: ClientManager | null = null;
+let loginThrottle: LoginThrottle | null = null;
 
 export default async function (
 	options: ServerOptions = {
@@ -676,28 +679,28 @@ function initializeClient(
 							return;
 						}
 
-						const hash = Helper.password.hash(p1);
+						return Helper.password.hash(p1).then((hash) =>
+							client.setPassword(hash, (success: boolean) => {
+								if (success) {
+									// Whoever knew the old password may still be signed in
+									// elsewhere: keep only the session that changed it
+									const others = Object.keys(client.config.sessions).filter(
+										(sessionToken) => sessionToken !== token
+									);
 
-						client.setPassword(hash, (success: boolean) => {
-							if (success) {
-								// Whoever knew the old password may still be signed in
-								// elsewhere: keep only the session that changed it
-								const others = Object.keys(client.config.sessions).filter(
-									(sessionToken) => sessionToken !== token
-								);
-
-								if (others.length > 0) {
-									others.forEach(signOutSession);
-									client.save();
-									sendSessionList();
+									if (others.length > 0) {
+										others.forEach(signOutSession);
+										client.save();
+										sendSessionList();
+									}
 								}
-							}
 
-							socket.emit("change-password", {
-								success: success,
-								error: success ? undefined : "update_failed",
-							});
-						});
+								socket.emit("change-password", {
+									success: success,
+									error: success ? undefined : "update_failed",
+								});
+							})
+						);
 					})
 					.catch((error: Error) => {
 						log.error(`Error while checking users password. Error: ${error.message}`);
@@ -896,7 +899,8 @@ function initializeClient(
 			if (
 				typeof newSetting.value === "object" ||
 				typeof newSetting.name !== "string" ||
-				newSetting.name[0] === "_"
+				newSetting.name[0] === "_" ||
+				serverOwnedSettings.has(newSetting.name)
 			) {
 				return;
 			}
@@ -1395,10 +1399,34 @@ function performAuthentication(this: Socket, data: AuthPerformData) {
 	}
 
 	const clientManager = manager;
+	const clientIp = getClientIp(this);
+	const throttleIp = ipKey(clientIp);
+	const throttleUser = userKey(data.user);
+	loginThrottle ??= new LoginThrottle(Config.values.loginThrottle);
+	const throttle = loginThrottle;
+	const retryAfter = throttle.retryAfter([throttleIp, throttleUser]);
+
+	if (retryAfter > 0) {
+		log.warn(
+			`Sign-in for ${colors.bold(data.user)} from ${colors.bold(
+				clientIp
+			)} throttled, retry in ${retryAfter}s`
+		);
+		this.emit("auth:failed", {retryAfter});
+		return;
+	}
+
+	throttle.attempt([throttleIp, throttleUser]);
 
 	void Auth.initialize().then(() => {
 		// Perform password checking
-		Auth.auth(clientManager, client, data.user, data.password, authCallback);
+		Auth.auth(clientManager, client, data.user, data.password, (success: boolean) => {
+			if (success) {
+				throttle.succeed(throttleIp, throttleUser);
+			}
+
+			authCallback(success);
+		});
 	});
 }
 

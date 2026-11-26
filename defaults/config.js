@@ -49,6 +49,30 @@ export default {
 	// This value is set to `false` by default.
 	reverseProxy: false,
 
+	// ### `loginThrottle`
+	//
+	// Slows down repeated failed password sign-ins. Each IP address (IPv6 per
+	// /64, the `X-Forwarded-For` address when `reverseProxy` is set) and each
+	// username gets a number of free failed attempts. After that, every failure
+	// doubles the wait before the next attempt (1, 2, 4… seconds), up to
+	// `maxDelay` seconds. A successful sign-in clears the username's count.
+	// Sessions that are already signed in are not affected.
+	//
+	// The available keys for the `loginThrottle` object are:
+	//
+	// - `enable`: Set to `false` to turn throttling off.
+	// - `ipAttempts`: Free failed attempts per IP address.
+	// - `userAttempts`: Free failed attempts per username.
+	// - `maxDelay`: Longest wait between attempts, in seconds.
+	//
+	// This value is set to `{enable: true, ipAttempts: 5, userAttempts: 10, maxDelay: 900}` by default.
+	loginThrottle: {
+		enable: true,
+		ipAttempts: 5,
+		userAttempts: 10,
+		maxDelay: 900,
+	},
+
 	// ### `maxHistory`
 	//
 	// Defines the maximum number of history lines that will be kept in memory per

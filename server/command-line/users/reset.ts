@@ -58,7 +58,7 @@ function change(name, password) {
 	const pathTemp = pathReal + ".tmp";
 	const user = JSON.parse(fs.readFileSync(pathReal, "utf-8"));
 
-	user.password = Helper.password.hash(password);
+	user.password = Helper.password.hashSync(password);
 	user.sessions = {};
 
 	const newUser = JSON.stringify(user, null, "\t");

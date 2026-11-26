@@ -459,7 +459,9 @@ describe("SQLite background search index", function () {
 
 			expect(scanned.every((step) => step.examined <= 250)).to.equal(true);
 			expect(found).to.have.lengthOf(channelName ? searchable / 2 : searchable);
-			expect(found[0].text).to.equal("stored line 2998");
+			// Newest first batch by batch; inside one the order doesn't matter
+			expect(scanned[0].results.map((m) => m.text)).to.include("stored line 2998");
+			expect(scanned[0].results.map((m) => m.text)).to.not.include("stored line 1");
 		}
 	});
 

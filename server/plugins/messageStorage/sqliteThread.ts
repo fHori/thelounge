@@ -304,11 +304,7 @@ export default class ThreadedSqliteMessageStorage implements MessageProvider {
 			}
 
 			// The first batch decides: the index may not help this search
-			if (cursor.kind !== kind) {
-				kind = cursor.kind;
-				rows = searchBatchRows[kind].start;
-				continue;
-			}
+			kind = cursor.kind;
 
 			// Size the next batch to take about as long as targetMs, but no
 			// bigger than what likely fills the page at the rate rows matched

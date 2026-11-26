@@ -1246,10 +1246,12 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 			)
 			.get(...scopeParams, ...before, rows - 1) as {time: number; id: number} | undefined;
 
-		// The matches between the cursor and the edge, in one pass
+		// The matches between the cursor and the edge, in one pass. In no
+		// particular order: the browser and search() sort them anyway, and
+		// sorting here costs a full scan about a fifth of its time.
 		const found = this.database
 			.prepare(
-				`SELECT ${columns} FROM ${walk} (m.time, m.id) < (?, ?)${edge ? " AND (m.time, m.id) >= (?, ?)" : ""} AND ${filter.where} ORDER BY m.time DESC, m.id DESC`
+				`SELECT ${columns} FROM ${walk} (m.time, m.id) < (?, ?)${edge ? " AND (m.time, m.id) >= (?, ?)" : ""} AND ${filter.where}`
 			)
 			.all(
 				...scopeParams,

@@ -33,13 +33,20 @@ export function schemaVersion(source) {
 	return m ? m[1] : null;
 }
 
-// Turn one first-parent commit into {group, title, pr}, or null to skip it.
-// `pr` is set for pull requests merged from this repository's own branches:
-// their number is one of ours. Pull requests from other forks are not linked.
-// `pull` is the pull request GitHub says a squash merge came from, see
-// lookUpPullRequest(): its branch groups it, as a merge commit's does.
+// What GitHub allows in a user name; bots ("dependabot[bot]") don't match
+const GITHUB_LOGIN = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/;
+
+// Turn one first-parent commit into {group, title, pr, author}, or null to
+// skip it. `pr` is set for pull requests merged into this repository: their
+// number is one of ours. A merge commit only tells where the branch came
+// from, so one from another fork is not linked: it may be history brought in
+// from upstream. `pull` is the pull request GitHub says a squash merge came
+// from, see lookUpPullRequest(): merged here as that very commit, so it is
+// linked wherever its branch lived, and grouped by that branch. `author` is
+// set for a pull request by someone other than this repository's owner, to
+// credit them.
 /**
- * @typedef {{number: number, branch: string, own: boolean}} PullRequest
+ * @typedef {{number: number, branch: string, own: boolean, author?: string}} PullRequest
  * @param {{subject: string, body: string, pull?: PullRequest | null}} commit
  * @param {string} [repository]
  */
@@ -47,6 +54,7 @@ export function classify({subject, body, pull}, repository = SCHEME.repository) 
 	let branch = "";
 	let title = subject;
 	let pr = null;
+	let author = null;
 	let m;
 
 	if ((m = /^Merge pull request #(\d+) from ([^/\s]+)\/(\S+)/.exec(subject))) {
@@ -66,7 +74,15 @@ export function classify({subject, body, pull}, repository = SCHEME.repository) 
 	} else if (pull) {
 		branch = pull.branch;
 		title = subject.replace(/\s*\(#\d+\)$/, "");
-		pr = pull.own ? pull.number : null;
+		pr = pull.number;
+
+		if (
+			pull.author &&
+			GITHUB_LOGIN.test(pull.author) &&
+			pull.author.toLowerCase() !== repository.split("/")[0].toLowerCase()
+		) {
+			author = pull.author;
+		}
 	} else {
 		// A squash merge or direct commit. Drop a trailing "(#N)": in history
 		// brought in from elsewhere it names another repository's PR.
@@ -79,7 +95,7 @@ export function classify({subject, body, pull}, repository = SCHEME.repository) 
 
 	const prefix = branch.includes("/") ? branch.split("/")[0].toLowerCase() : "";
 	const group = GROUPS.find(([, prefixes]) => prefixes.includes(prefix))?.[0] ?? OTHER;
-	return {group, title: sanitize(title.trim()), pr};
+	return {group, title: sanitize(title.trim()), pr, author};
 }
 
 // No notifications from release notes: put @mentions and cross-repository
@@ -118,7 +134,10 @@ export function render({version, commits, storageChanged, image, repository = SC
 
 		if (r) {
 			const link = r.pr ? ` ([#${r.pr}](https://github.com/${repository}/pull/${r.pr}))` : "";
-			groups.set(r.group, [...(groups.get(r.group) ?? []), r.title + link]);
+			// Merged into this repository, so the mention is ours to make: it
+			// credits them, and GitHub lists them as a contributor to the release
+			const credit = r.author ? ` by @${r.author}` : "";
+			groups.set(r.group, [...(groups.get(r.group) ?? []), r.title + credit + link]);
 		}
 	}
 
@@ -211,11 +230,13 @@ export function pickPullRequest(pulls, sha, repository = SCHEME.repository) {
 		return null;
 	}
 
-	return {
+	const result = {
 		number: pull.number,
 		branch: pull.head.ref,
 		own: pull.head.repo?.full_name?.toLowerCase() === repo,
 	};
+
+	return pull.user?.login ? {...result, author: pull.user.login} : result;
 }
 
 function schemaAt(ref) {

@@ -238,9 +238,55 @@ describe("release notes", function () {
 			],
 		});
 		expect(body).to.include(
-			"## Features\n\n- Tracker avatars\n\n## Performance\n\n- Storage: run SQLite on its own thread ([#96](https://github.com/fHori/thelounge/pull/96))\n"
+			"## Features\n\n- Tracker avatars ([#90](https://github.com/fHori/thelounge/pull/90))\n\n## Performance\n\n- Storage: run SQLite on its own thread ([#96](https://github.com/fHori/thelounge/pull/96))\n"
 		);
 		expect(body).to.include("## Other changes\n\n- Fix a thing\n");
+	});
+
+	it("credits pull requests from other people", function () {
+		const body = N.render({
+			version: "2026.12.0",
+			image: "img",
+			storageChanged: false,
+			repository: "fHori/thelounge",
+			commits: [
+				{
+					subject: "Sync read state with ircv3 draft/read-marker (#108)",
+					body: "",
+					pull: {
+						number: 108,
+						branch: "feat/read-marker",
+						own: false,
+						author: "B4reMetal",
+					},
+				},
+				{
+					subject: "Mine (#96)",
+					body: "",
+					pull: {number: 96, branch: "perf/x", own: true, author: "fHori"},
+				},
+				{
+					subject: "Bump a thing (#97)",
+					body: "",
+					pull: {
+						number: 97,
+						branch: "dependabot/x",
+						own: true,
+						author: "dependabot[bot]",
+					},
+				},
+			],
+		});
+
+		expect(body).to.include(
+			"- Sync read state with ircv3 draft/read-marker by @B4reMetal ([#108](https://github.com/fHori/thelounge/pull/108))"
+		);
+		expect(body).to.include("- Mine ([#96](https://github.com/fHori/thelounge/pull/96))");
+		expect(body).to.include(
+			"- Bump a thing ([#97](https://github.com/fHori/thelounge/pull/97))"
+		);
+		// The only mention: the credit, none from the owner or bots
+		expect(body.match(/@\w/g)).to.have.lengthOf(1);
 	});
 
 	it("picks the pull request a squash merge came from", function () {
@@ -250,6 +296,7 @@ describe("release notes", function () {
 			merge_commit_sha: mergeSha,
 			base: {repo: {full_name: base}},
 			head: {ref: "perf/x", repo: {full_name: head}},
+			user: {login: head.split("/")[0]},
 		});
 
 		expect(
@@ -261,14 +308,14 @@ describe("release notes", function () {
 				sha,
 				"fHori/thelounge"
 			)
-		).to.deep.equal({number: 96, branch: "perf/x", own: true});
+		).to.deep.equal({number: 96, branch: "perf/x", own: true, author: "fHori"});
 		expect(
 			N.pickPullRequest(
 				[pull(96, sha, "fHori/thelounge", "someone/thelounge")],
 				sha,
 				"fHori/thelounge"
 			)
-		).to.deep.equal({number: 96, branch: "perf/x", own: false});
+		).to.deep.equal({number: 96, branch: "perf/x", own: false, author: "someone"});
 		// Merged somewhere else as this commit, e.g. upstream
 		expect(
 			N.pickPullRequest(

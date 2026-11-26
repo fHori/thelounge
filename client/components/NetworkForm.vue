@@ -116,7 +116,8 @@
 						</div>
 					</div>
 
-					<h2>Proxy Settings</h2>
+					<h3 v-if="sectioned">Proxy</h3>
+					<h2 v-else>Proxy Settings</h2>
 					<div class="connect-row">
 						<label></label>
 						<div class="input-wrap">

@@ -87,6 +87,7 @@ img {
 	margin: -1px;
 	padding: 0;
 	overflow: hidden;
+	/* stylelint-disable-next-line property-no-deprecated -- the screen-reader-only pattern, clip-path behaves differently */
 	clip: rect(0, 0, 0, 0);
 	border: 0;
 }
@@ -185,6 +186,7 @@ pre {
 	line-height: 1.4286;
 	color: #333;
 	word-break: break-all;
+	/* stylelint-disable-next-line property-no-deprecated -- kept as is, the built CSS stays the same */
 	word-wrap: break-word;
 	background-color: #f5f5f5;
 	border-radius: 4px;
@@ -1951,8 +1953,10 @@ textarea.input {
 }
 
 #chat .msg {
+	/* stylelint-disable property-no-deprecated, declaration-property-value-keyword-no-deprecated -- kept as is, the built CSS stays the same */
 	word-wrap: break-word;
 	word-break: break-word;
+	/* stylelint-enable property-no-deprecated, declaration-property-value-keyword-no-deprecated */
 
 	/* Webkit-specific */
 	display: flex;

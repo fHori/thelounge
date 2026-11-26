@@ -28,6 +28,11 @@ updates:
       # file name, for nothing this project would notice
       - dependency-name: content-disposition
         update-types: ["version-update:semver-major"]
+      # 9.2.0 reports TS6305 for the referenced projects' outputs when it runs
+      # without build mode, which breaks yarn test, dev and watch locally. CI
+      # skips this checker (THELOUNGE_SKIP_TYPECHECK), so its checks pass.
+      - dependency-name: fork-ts-checker-webpack-plugin
+        versions: [">=9.2.0"]
     open-pull-requests-limit: 10
 
   - package-ecosystem: github-actions

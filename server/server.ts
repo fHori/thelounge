@@ -946,6 +946,16 @@ function initializeClient(
 			}
 		});
 
+		socket.on("diagnostics", async (data) => {
+			const probeDisk = _.isPlainObject(data) && data.disk === true;
+
+			try {
+				socket.emit("diagnostics", await client.diagnostics(probeDisk));
+			} catch (err) {
+				log.error(`Diagnostics failed for ${client.name}: ${String(err)}`);
+			}
+		});
+
 		socket.on("mute:change", (data) => {
 			if (!_.isPlainObject(data) || typeof data.target !== "number") {
 				return;

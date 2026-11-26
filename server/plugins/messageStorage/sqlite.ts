@@ -9,7 +9,15 @@ import Chan, {Channel} from "../../models/chan.js";
 import Helper from "../../helper.js";
 import type {SearchableMessageStorage, DeletionRequest} from "./types.js";
 import Network from "../../models/network.js";
-import {SearchQuery, SearchResponse} from "../../../shared/types/storage.js";
+import type {
+	DatabaseStats,
+	DiskProbe,
+	SearchIndexState,
+	SearchQuery,
+	SearchResponse,
+	SearchScanReason,
+	SearchStats,
+} from "../../../shared/types/storage.js";
 import {MessageType} from "../../../shared/types/msg.js";
 
 type Migration = {version: number; stmts: string[]};
@@ -272,6 +280,10 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 	// False while existing messages are still being added to the search
 	// index in the background. Search reads every message until then.
 	searchIndexReady = true;
+	// Why the background build stopped, if it failed
+	private searchIndexError: string | null = null;
+	// How the last search went, for diagnostics
+	lastSearchStats: SearchStats | null = null;
 	private finishing = false;
 	private backfill: {
 		timer: NodeJS.Timeout | null;
@@ -348,6 +360,7 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		}
 
 		this.searchIndexReady = false;
+		this.searchIndexError = null;
 		this.backfill = {
 			timer: null,
 			rows: 2000,
@@ -386,6 +399,7 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 					`Building the search index for ${this.userName} failed, search stays slow:`,
 					String(err)
 				);
+				this.searchIndexError = String(err);
 				this.backfill = null;
 			}
 		}, 5);
@@ -1134,7 +1148,9 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		}
 
 		// Flush any pending batched writes before searching
+		const flushStart = performance.now();
 		await this.flushBatch();
+		const flushMs = performance.now() - flushStart;
 
 		const searchTermParts = query.searchTerm.split(" ");
 
@@ -1228,7 +1244,10 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 				? "messages m INDEXED BY network_channel_time"
 				: "messages m INDEXED BY time";
 
-		const candidates = this.searchCandidates(searchTerm);
+		const indexStart = performance.now();
+		const {ids: candidates, reason} = this.searchCandidates(searchTerm);
+		const indexMs = performance.now() - indexStart;
+		const queryStart = performance.now();
 		let rows: unknown[];
 
 		if (candidates !== null && candidates.length <= searchLimits.direct) {
@@ -1260,6 +1279,21 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 			);
 		}
 
+		this.lastSearchStats = {
+			strategy:
+				candidates === null
+					? "scan"
+					: candidates.length <= searchLimits.direct
+						? "lookup"
+						: "filter",
+			reason,
+			candidates: candidates === null ? null : candidates.length,
+			results: rows.length,
+			flushMs,
+			indexMs,
+			queryMs: performance.now() - queryStart,
+		};
+
 		return {
 			...query,
 			results: rows.map(rowToMessage).reverse(),
@@ -1269,20 +1303,24 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 	/**
 	 * Ids of the messages that could contain `term`, according to the trigram
 	 * index: a superset of the real matches, never missing one. Null when the
-	 * index has nothing useful to say, i.e. the term is shorter than a trigram
-	 * or matches more rows than are worth collecting.
+	 * index has nothing useful to say, with the reason: the index isn't
+	 * complete, the term is shorter than a trigram, or it matches more rows
+	 * than are worth collecting.
 	 */
-	private searchCandidates(term: string): number[] | null {
+	private searchCandidates(term: string): {ids: number[] | null; reason?: SearchScanReason} {
 		// Until every message is in the index, it can't say where a term
 		// isn't, so search reads the messages themselves
 		if (!this.searchIndexReady) {
-			return null;
+			return {
+				ids: null,
+				reason: this.searchIndexError === null ? "index-building" : "index-failed",
+			};
 		}
 
 		const match = trigramQuery(term);
 
 		if (match === null) {
-			return null;
+			return {ids: null, reason: "short-term"};
 		}
 
 		const ids = this.database
@@ -1290,7 +1328,109 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 			.pluck()
 			.all(match, searchLimits.filter + 1) as number[];
 
-		return ids.length > searchLimits.filter ? null : ids;
+		return ids.length > searchLimits.filter ? {ids: null, reason: "common-term"} : {ids};
+	}
+
+	/**
+	 * Where the background search index build is.
+	 */
+	searchIndexState(): SearchIndexState {
+		if (this.searchIndexReady) {
+			return {state: "complete"};
+		}
+
+		const next = Number(this.option("fts_backfill_next"));
+		const end = Number(this.option("fts_backfill_end"));
+		// The build goes through ids from 0 up, across restarts
+		const progress = end > 0 ? Math.min(1, Math.max(0, next / end)) : 0;
+		// Ids, so an upper bound: deleted messages and non-messages are counted too
+		const remaining = Math.max(0, end - next + 1);
+
+		if (this.searchIndexError !== null || !this.backfill) {
+			return {
+				state: "failed",
+				progress,
+				remaining,
+				error: this.searchIndexError ?? "The build isn't running",
+			};
+		}
+
+		return {state: "building", progress, remaining, startedAt: this.backfill.started};
+	}
+
+	/**
+	 * Size and settings of the database, all cheap to read: nothing here
+	 * counts rows.
+	 */
+	async databaseStats(): Promise<DatabaseStats> {
+		await this.initDone.promise;
+
+		const file = this.database.name;
+
+		const size = async (name: string) => {
+			try {
+				return (await fs.stat(name)).size;
+			} catch {
+				return 0;
+			}
+		};
+
+		return {
+			sqliteVersion: this.database.prepare("SELECT sqlite_version()").pluck().get() as string,
+			schemaVersion: await this.current_version(),
+			fileBytes: await size(file),
+			walBytes: await size(`${file}-wal`),
+			pageSize: this.database.pragma("page_size", {simple: true}) as number,
+			pages: this.database.pragma("page_count", {simple: true}) as number,
+			freePages: this.database.pragma("freelist_count", {simple: true}) as number,
+			journalMode: this.database.pragma("journal_mode", {simple: true}) as string,
+			cacheKiB: cacheKiB(
+				this.database.pragma("cache_size", {simple: true}) as number,
+				this.database.pragma("page_size", {simple: true}) as number
+			),
+			maxRowId:
+				(this.database.prepare("SELECT max(id) FROM messages").pluck().get() as
+					number | null) ?? 0,
+			pendingClears: this.clears.size,
+		};
+	}
+
+	/**
+	 * Times reads of random blocks of the database file, to tell a slow disk
+	 * apart from slow queries. Blocks already in the OS cache read fast, so a
+	 * large database shows the disk best.
+	 */
+	async probeDisk(reads = 64, blockBytes = 4096): Promise<DiskProbe> {
+		await this.initDone.promise;
+
+		const handle = await fs.open(this.database.name, "r");
+		const times: number[] = [];
+
+		try {
+			const {size} = await handle.stat();
+			const blocks = Math.max(1, Math.floor(size / blockBytes));
+			const buffer = Buffer.alloc(blockBytes);
+
+			for (let i = 0; i < reads; i++) {
+				const position = Math.floor(Math.random() * blocks) * blockBytes;
+				const start = performance.now();
+				await handle.read(buffer, 0, blockBytes, position);
+				times.push(performance.now() - start);
+			}
+		} finally {
+			await handle.close();
+		}
+
+		times.sort((a, b) => a - b);
+		const at = (q: number) => times[Math.min(times.length - 1, Math.floor(q * times.length))];
+
+		return {
+			reads,
+			blockBytes,
+			medianMs: at(0.5),
+			p90Ms: at(0.9),
+			maxMs: times[times.length - 1],
+		};
 	}
 
 	async deleteMessages(req: DeletionRequest): Promise<number> {
@@ -1509,6 +1649,11 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 			return Promise.reject(err instanceof Error ? err : new Error(String(err)));
 		}
 	}
+}
+
+// PRAGMA cache_size is in pages when positive, in KiB when negative
+export function cacheKiB(cacheSize: number, pageSize: number): number {
+	return cacheSize < 0 ? -cacheSize : Math.round((cacheSize * pageSize) / 1024);
 }
 
 /**

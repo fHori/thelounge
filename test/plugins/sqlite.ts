@@ -477,6 +477,73 @@ describe("SQLite background search index", function () {
 		expect(await search(store, "line 2999")).to.deep.equal([]);
 		expect(await search(store, "line 2998")).to.deep.equal(["stored line 2998"]);
 	});
+
+	it("should report how far the index is and how searches went", async function () {
+		const store = await open();
+		const backfill = () => (store as unknown as {backfill: {rows: number}}).backfill;
+
+		backfill().rows = 1000;
+		store.buildSearchIndexStep();
+
+		const building = store.searchIndexState();
+		expect(building.state).to.equal("building");
+		expect(building.progress).to.be.within(0.2, 0.5);
+		expect(building.remaining).to.be.within(1, total);
+
+		await search(store, "line 1234");
+		expect(store.lastSearchStats).to.include({
+			strategy: "scan",
+			reason: "index-building",
+			candidates: null,
+			results: 1,
+		});
+
+		await store.finishSearchIndex();
+		expect(store.searchIndexState()).to.deep.equal({state: "complete"});
+
+		await search(store, "line 1234");
+		expect(store.lastSearchStats).to.include({strategy: "lookup", results: 1});
+		expect(store.lastSearchStats!.reason).to.equal(undefined);
+		expect(store.lastSearchStats!.candidates).to.be.at.least(1);
+
+		await search(store, "li");
+		expect(store.lastSearchStats).to.include({strategy: "scan", reason: "short-term"});
+	});
+
+	it("should report a failed index build", async function () {
+		const store = await open();
+		// Make the next step fail: the index can't be written to
+		store.database.exec("DROP TABLE messages_fts");
+
+		for (let i = 0; i < 100 && store.searchIndexState().state === "building"; i++) {
+			await new Promise((r) => setTimeout(r, 10));
+		}
+
+		const failed = store.searchIndexState();
+		expect(failed.state).to.equal("failed");
+		expect(failed.error).to.match(/messages_fts/);
+
+		await search(store, "line 1234");
+		expect(store.lastSearchStats).to.include({strategy: "scan", reason: "index-failed"});
+	});
+
+	it("should report database stats and time disk reads", async function () {
+		const store = await open();
+		await store.finishSearchIndex();
+		const stats = await store.databaseStats();
+
+		expect(stats.maxRowId).to.equal(total);
+		expect(stats.fileBytes).to.be.greaterThan(0);
+		expect(stats.pages).to.be.greaterThan(0);
+		expect(stats.journalMode).to.equal("wal");
+		expect(stats.schemaVersion).to.be.greaterThan(0);
+		expect(stats.pendingClears).to.equal(0);
+
+		const disk = await store.probeDisk(8);
+		expect(disk.reads).to.equal(8);
+		expect(disk.medianMs).to.be.at.most(disk.p90Ms);
+		expect(disk.p90Ms).to.be.at.most(disk.maxMs);
+	});
 });
 
 describe("SQLite clearing history", function () {

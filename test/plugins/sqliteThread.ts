@@ -7,6 +7,7 @@ import Msg from "../../server/models/msg.js";
 import {MessageType} from "../../shared/types/msg.js";
 import Config from "../../server/config.js";
 import ThreadedSqliteMessageStorage, {
+	diagnosticsTimeout,
 	stopStorageThread,
 } from "../../server/plugins/messageStorage/sqliteThread.js";
 import type Network from "../../server/models/network.js";
@@ -102,6 +103,31 @@ describe("SQLite message storage thread", function () {
 		expect(found.results[0]).to.be.instanceOf(Msg);
 	});
 
+	it("keeps the shape of searches, never the term, for diagnostics", async function () {
+		await store.search({
+			networkUuid: net.uuid,
+			channelName: "",
+			searchTerm: "secret from:someone",
+			offset: 0,
+		});
+
+		const diagnostics = await store.diagnostics(true);
+		const [last] = diagnostics.searches;
+
+		expect(last).to.include({termLength: 6, scope: "network", strategy: "lookup"});
+		expect(last.filters).to.deep.equal(["from"]);
+		expect(last.totalMs).to.be.at.least(last.queryMs);
+		expect(JSON.stringify(diagnostics)).to.not.include("secret");
+		expect(JSON.stringify(diagnostics)).to.not.include("someone");
+		expect(JSON.stringify(diagnostics)).to.not.include(dbPath);
+
+		expect(diagnostics).to.include({storage: "sqlite", open: true});
+		expect(diagnostics.index).to.deep.equal({state: "complete"});
+		expect(diagnostics.database!.maxRowId).to.equal(5);
+		expect(diagnostics.thread!.pingMs).to.be.at.least(0);
+		expect(diagnostics.disk!.reads).to.equal(64);
+	});
+
 	it("passes storage errors back to the caller", async function () {
 		let error: unknown;
 
@@ -140,6 +166,34 @@ describe("SQLite message storage thread", function () {
 		const messages = await reading;
 		expect(Date.now() - started).to.be.at.least(300);
 		expect(messages.at(-1)?.text).to.equal("written while locked");
+	});
+
+	it("says the storage thread is busy rather than waiting for it", async function () {
+		await store.index(net, chan, message(107, 7000, "stored while busy"));
+
+		// Storing the queued message waits for the lock, so the thread
+		// answers nothing else meanwhile
+		const blocker = new Database(dbPath);
+		blocker.exec("BEGIN IMMEDIATE");
+		const reading = store.getMessages(net, chan, () => 0);
+		const timeout = diagnosticsTimeout.ms;
+		diagnosticsTimeout.ms = 100;
+
+		try {
+			const diagnostics = await store.diagnostics();
+			expect(diagnostics.thread).to.deep.equal({pingMs: null, waiting: 1});
+			expect(diagnostics.database).to.equal(undefined);
+		} finally {
+			diagnosticsTimeout.ms = timeout;
+			blocker.exec("COMMIT");
+			blocker.close();
+		}
+
+		await reading;
+		const after = await store.diagnostics();
+		expect(after.thread!.pingMs).to.be.a("number");
+		expect(after.thread!.stores).to.be.at.least(1);
+		expect(after.thread!.buildingIndex).to.equal(0);
 	});
 
 	it("hides a cleared channel", async function () {

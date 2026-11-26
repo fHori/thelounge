@@ -7,12 +7,22 @@
 // thread (sqliteWorker.ts), and a slow disk only delays storage.
 import {Worker} from "node:worker_threads";
 import log from "../../log.js";
+import {scrub} from "../../diagnostics.js";
 import Config from "../../config.js";
 import Msg, {Message} from "../../models/msg.js";
 import type {Channel} from "../../models/chan.js";
 import type Network from "../../models/network.js";
 import type {DeletionRequest, MessageProvider} from "./types.js";
-import type {SearchQuery, SearchResponse} from "../../../shared/types/storage.js";
+import type {
+	DatabaseStats,
+	DiskProbe,
+	SearchIndexState,
+	SearchLogEntry,
+	SearchQuery,
+	SearchResponse,
+	SearchStats,
+	StorageDiagnostics,
+} from "../../../shared/types/storage.js";
 import {toStoredRow, historyLimit, maxMessageId} from "./sqlite.js";
 import type {StorageReply, StorageRequest} from "./sqliteWorker.js";
 
@@ -65,6 +75,11 @@ class StorageThread {
 			this.pending.set(id, {resolve: (value) => resolve(value as T), reject});
 			this.post({id, store, method, args});
 		});
+	}
+
+	// Calls waiting for an answer
+	get waiting() {
+		return this.pending.size;
 	}
 
 	// For calls nobody waits on. Errors are logged by the storage thread.
@@ -149,6 +164,43 @@ export async function stopStorageThread() {
 	}
 }
 
+// How many searches diagnostics keep per user
+const searchLogSize = 20;
+
+// Searches slower than this are logged, for those who only see the log
+const slowSearchMs = 2000;
+
+// How long diagnostics wait for the storage thread. Longer means it's busy,
+// which is worth saying rather than waiting for.
+export const diagnosticsTimeout = {ms: 2000};
+
+// The promise's value, or null if it takes longer than `ms`
+function within<T>(promise: Promise<T>, ms: number): Promise<T | null> {
+	let timer: NodeJS.Timeout;
+	const timeout = new Promise<null>((resolve) => {
+		timer = setTimeout(() => resolve(null), ms);
+	});
+
+	return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+const searchFilters = ["from", "datebefore", "dateafter"];
+
+// What diagnostics keep of a search: never the term, only its shape
+export function searchShape(
+	query: SearchQuery
+): Pick<SearchLogEntry, "termLength" | "filters" | "scope"> {
+	const words = query.searchTerm.split(" ");
+	const filters = searchFilters.filter((name) => words.some((w) => w.startsWith(`${name}:`)));
+	const term = words.filter((w) => !searchFilters.some((name) => w.startsWith(`${name}:`)));
+
+	return {
+		termLength: Array.from(term.join(" ")).length,
+		filters,
+		scope: query.channelName ? "channel" : query.networkUuid ? "network" : "all",
+	};
+}
+
 // Messages come back from the storage thread as plain objects
 function toMsg(message: object): Msg {
 	return new Msg(message);
@@ -162,6 +214,10 @@ export default class ThreadedSqliteMessageStorage implements MessageProvider {
 	isEnabled = false;
 	private store = nextStore++;
 	private thread: StorageThread | null = null;
+	// Why the database didn't open, for diagnostics
+	private enableError: string | null = null;
+	// The last searches, newest first, for diagnostics
+	private searchLog: SearchLogEntry[] = [];
 
 	constructor(private userName: string) {}
 
@@ -179,8 +235,10 @@ export default class ThreadedSqliteMessageStorage implements MessageProvider {
 
 			// Unless it was closed while opening
 			this.isEnabled = enabled && open.has(this);
+			this.enableError = null;
 		} catch (err) {
 			this.isEnabled = false;
+			this.enableError = err instanceof Error ? err.message : String(err);
 			throw err;
 		}
 	}
@@ -238,8 +296,80 @@ export default class ThreadedSqliteMessageStorage implements MessageProvider {
 	}
 
 	async search(query: SearchQuery): Promise<SearchResponse> {
-		const response = await this.read<SearchResponse>({...query, results: []}, "search", query);
+		const start = performance.now();
+		const {response, stats} = await this.read<{
+			response: SearchResponse;
+			stats: SearchStats | null;
+		}>({response: {...query, results: []}, stats: null}, "searchWithStats", query);
+
+		if (stats) {
+			const entry: SearchLogEntry = {
+				...stats,
+				at: Date.now(),
+				...searchShape(query),
+				totalMs: performance.now() - start,
+			};
+			this.searchLog.unshift(entry);
+			this.searchLog.length = Math.min(this.searchLog.length, searchLogSize);
+
+			if (entry.totalMs > slowSearchMs) {
+				log.warn(
+					`Slow search for ${this.userName}: ${Math.round(entry.totalMs)} ms, ` +
+						`${entry.strategy}${entry.reason ? ` (${entry.reason})` : ""}, ` +
+						`query ${Math.round(entry.queryMs)} ms, ${entry.termLength} chars, ` +
+						`${entry.results} results. Details in Help → Diagnostics.`
+				);
+			}
+		}
+
 		return {...response, results: response.results.map(toMsg)};
+	}
+
+	/**
+	 * What search and the storage thread are up to, for finding out why
+	 * search is slow. `probeDisk` also times reads from the database file.
+	 */
+	async diagnostics(probeDisk = false): Promise<StorageDiagnostics> {
+		const result: StorageDiagnostics = {
+			storage: "sqlite",
+			open: this.isEnabled,
+			searches: this.searchLog,
+		};
+
+		if (this.enableError !== null) {
+			result.error = scrub(this.enableError, this.userName);
+		}
+
+		const running = this.openThread();
+
+		if (!running || !this.isEnabled) {
+			return result;
+		}
+
+		const waiting = running.waiting;
+		const start = performance.now();
+
+		// Calls are answered in order, so a busy thread answers none of these
+		// until it's done; say so instead of keeping the page waiting
+		if ((await within(running.call(this.store, "ping"), diagnosticsTimeout.ms)) === null) {
+			result.thread = {pingMs: null, waiting};
+			return result;
+		}
+
+		const pingMs = performance.now() - start;
+		const wide = await running.call<{stores: number; buildingIndex: number}>(
+			this.store,
+			"threadStats"
+		);
+		result.thread = {pingMs, waiting, ...wide};
+
+		const stats = await running.call<{
+			database: DatabaseStats;
+			index: SearchIndexState;
+			disk?: DiskProbe;
+		}>(this.store, "diagnostics", probeDisk);
+
+		return {...result, ...stats};
 	}
 
 	async getMessagesBefore(

@@ -5,7 +5,7 @@ import {parentPort} from "node:worker_threads";
 import log from "../../log.js";
 import SqliteMessageStorage, {StoredRow} from "./sqlite.js";
 import type {DeletionRequest} from "./types.js";
-import type {SearchQuery} from "../../../shared/types/storage.js";
+import type {SearchBatchQuery, SearchQuery} from "../../../shared/types/storage.js";
 
 export type StorageRequest = {
 	// Set when the server waits for the answer
@@ -68,13 +68,6 @@ async function shutdown() {
 	await Promise.allSettled(Array.from(closing));
 }
 
-// A search, with how it went
-async function searchWithStats(store: number, query: SearchQuery) {
-	const storage = get(store);
-	const response = await storage.search(query);
-	return {response, stats: storage.lastSearchStats};
-}
-
 async function diagnostics(store: number, probeDisk: boolean) {
 	const storage = get(store);
 
@@ -109,7 +102,7 @@ const methods = {
 		get(store).getChannelHistory(networkUuid, channelName, limit),
 	getMaxMessageId: (store: number) => get(store).getMaxMessageId(),
 	search: (store: number, query: SearchQuery) => get(store).search(query),
-	searchWithStats,
+	searchBatch: (store: number, query: SearchBatchQuery) => get(store).searchBatch(query),
 	ping: () => undefined,
 	threadStats,
 	diagnostics,

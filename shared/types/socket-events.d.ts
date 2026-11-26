@@ -5,7 +5,7 @@ import {SharedMsg, LinkPreview} from "./msg";
 import {SharedUser} from "./user";
 import {SharedChangelogData} from "./changelog";
 import {SharedConfiguration, LockedSharedConfiguration} from "./config";
-import {SearchResponse, SearchQuery, Diagnostics} from "./storage";
+import {Diagnostics, SearchRequest, SearchResultsChunk} from "./storage";
 
 type Session = {
 	current: boolean;
@@ -115,7 +115,7 @@ interface ServerToClientEvents {
 
 	init: EventHandler<{active: number; networks: SharedNetwork[]; token?: string}>;
 
-	"search:results": (response: SearchResponse) => void;
+	"search:results": EventHandler<SearchResultsChunk>;
 	diagnostics: EventHandler<Diagnostics>;
 
 	quit: EventHandler<{network: string}>;
@@ -218,7 +218,8 @@ interface ClientToServerEvents {
 
 	"history:clear": EventHandler<{target: number}>;
 
-	search: EventHandler<SearchQuery>;
+	search: EventHandler<SearchRequest>;
+	"search:cancel": EventHandler<number>;
 	diagnostics: EventHandler<{disk?: boolean}>;
 }
 

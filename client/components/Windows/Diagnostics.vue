@@ -84,13 +84,14 @@
 							Recent searches
 							<span
 								class="tooltipped tooltipped-e tooltipped-no-delay"
-								aria-label="lookup: only rows the index points at. filter: walk skipping what the index rules out. scan: read every message until a page is full."
+								aria-label="lookup: only rows the index points at. scan: every message, newest first. First: until the first results showed."
 							>
 								<button class="extra-help" />
 							</span>
 						</h3>
 						<table class="diagnostics-table diagnostics-searches">
 							<tr>
+								<th>First</th>
 								<th>Total</th>
 								<th>How</th>
 								<th>Query</th>
@@ -100,6 +101,7 @@
 								<th>When</th>
 							</tr>
 							<tr v-for="s in data.storage.searches" :key="s.at">
+								<td>{{ s.firstMs === null ? "–" : ms(s.firstMs) }}</td>
 								<td>{{ ms(s.totalMs) }}</td>
 								<td :class="{'diagnostics-bad': s.strategy === 'scan'}">
 									{{ s.strategy
@@ -110,7 +112,8 @@
 								<td>
 									{{ s.termLength }} chars{{
 										s.filters.length ? ` +${s.filters.join(",")}` : ""
-									}}, {{ s.scope }}
+									}}, {{ s.scope }}{{ s.more ? ", older" : ""
+									}}{{ s.cancelled ? ", cancelled" : "" }}
 								</td>
 								<td>{{ s.results }}</td>
 								<td>{{ time(s.at) }}</td>
@@ -287,10 +290,11 @@ import {
 	indexSummary,
 	ms,
 	scanReasons,
+	searchQueuedMs,
 	threadSummary,
 } from "../../js/helpers/diagnosticsReport";
 import {browserSearches} from "../../js/searchTiming";
-import type {Diagnostics, SearchLogEntry} from "../../../shared/types/storage";
+import type {Diagnostics} from "../../../shared/types/storage";
 
 const networkFilesystems = ["nfs", "cifs", "smb2", "9p", "fuse", "ceph"];
 
@@ -355,8 +359,7 @@ export default defineComponent({
 			}
 		};
 
-		const queued = (s: SearchLogEntry) =>
-			Math.max(0, s.totalMs - s.flushMs - s.indexMs - s.queryMs);
+		const queued = searchQueuedMs;
 
 		const time = (at: number) => new Date(at).toLocaleTimeString();
 

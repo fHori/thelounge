@@ -28,29 +28,43 @@
 					/>
 				</div>
 				<div v-if="network && channel" class="chat-content">
-					<div ref="chat" class="chat" tabindex="-1">
-						<div v-show="moreResultsAvailable" class="show-more">
+					<div
+						v-if="searching"
+						class="search-progress"
+						role="progressbar"
+						aria-label="Searching"
+					/>
+					<div ref="chat" class="chat" tabindex="-1" :aria-busy="searching">
+						<div v-show="moreResultsAvailable || (searching && more)" class="show-more">
 							<button
 								ref="loadMoreButton"
-								:disabled="
-									!!store.state.messageSearchPendingQuery ||
-									!store.state.isConnected
-								"
+								:disabled="searching || !store.state.isConnected"
 								class="btn"
 								@click="onShowMoreClick"
 							>
-								<span v-if="store.state.messageSearchPendingQuery">Loading…</span>
+								<span v-if="searching">Loading…</span>
 								<span v-else>Show older messages</span>
 							</button>
 						</div>
 
 						<div
-							v-if="store.state.messageSearchPendingQuery && !offset"
+							v-if="searching && !messages.length && !more"
+							class="search-skeleton"
+							aria-label="Searching…"
+						>
+							<div v-for="n in 6" :key="n" class="search-skeleton-row">
+								<span class="search-skeleton-time" />
+								<span class="search-skeleton-from" />
+								<span
+									class="search-skeleton-text"
+									:style="{width: `${30 + ((n * 37) % 50)}%`}"
+								/>
+							</div>
+						</div>
+						<div
+							v-else-if="!searching && !messages.length && !more"
 							class="search-status"
 						>
-							Searching…
-						</div>
-						<div v-else-if="!messages.length && !offset" class="search-status">
 							No results found.
 						</div>
 						<div
@@ -102,6 +116,102 @@
 
 .chat-view[data-type="search-results"] .chat-content {
 	margin-top: 45px;
+	position: relative;
+}
+
+/* A thin bar sweeping across the top while results are still coming in */
+.search-progress {
+	position: absolute;
+	top: 0;
+	left: 0;
+	right: 0;
+	height: 2px;
+	z-index: 1;
+	overflow: hidden;
+	background: color-mix(in srgb, var(--link-color) 20%, transparent);
+}
+
+.search-progress::after {
+	content: "";
+	position: absolute;
+	top: 0;
+	bottom: 0;
+	width: 30%;
+	background: var(--link-color);
+	animation: search-progress 1.2s ease-in-out infinite;
+}
+
+@keyframes search-progress {
+	from {
+		left: -30%;
+	}
+
+	to {
+		left: 100%;
+	}
+}
+
+/* Placeholder rows until the first results arrive */
+.search-skeleton {
+	padding: 10px 0;
+}
+
+.search-skeleton-row {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	height: 26px;
+	padding: 0 10px;
+}
+
+.search-skeleton-row span {
+	height: 10px;
+	border-radius: 5px;
+	background:
+		linear-gradient(
+				90deg,
+				transparent 0%,
+				color-mix(in srgb, var(--body-color) 12%, transparent) 50%,
+				transparent 100%
+			)
+			0 0 / 200% 100%,
+		color-mix(in srgb, var(--body-color) 8%, transparent);
+	animation: search-shimmer 1.4s linear infinite;
+}
+
+.search-skeleton-time {
+	flex: 0 0 46px;
+}
+
+.search-skeleton-from {
+	flex: 0 0 80px;
+}
+
+@keyframes search-shimmer {
+	from {
+		background-position:
+			200% 0,
+			0 0;
+	}
+
+	to {
+		background-position:
+			-200% 0,
+			0 0;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.search-progress::after {
+		left: 0;
+		width: 100%;
+		animation: none;
+		opacity: 0.5;
+	}
+
+	.search-skeleton-row span {
+		animation: none;
+	}
 }
 </style>
 
@@ -120,8 +230,12 @@ import type {ClientMessage} from "../../js/types";
 import {useStore} from "../../js/store";
 import {useRoute} from "vue-router";
 import {switchToChannel} from "../../js/router";
-import {SearchQuery} from "../../../shared/types/storage";
+import type {SearchCursor, SearchRequest} from "../../../shared/types/storage";
 import {messageKey} from "../../../shared/messageKey";
+
+// Ids tell this browser's searches apart, so late results of a replaced one
+// are dropped
+let nextSearchId = 1;
 
 export default defineComponent({
 	name: "SearchResults",
@@ -139,8 +253,13 @@ export default defineComponent({
 
 		const loadMoreButton = ref<HTMLButtonElement>();
 
-		const offset = ref(0);
-		const moreResultsAvailable = ref(false);
+		const searching = computed(
+			() => !!store.state.messageSearch && !store.state.messageSearch.done
+		);
+		const more = computed(() => !!store.state.messageSearch?.more);
+		const moreResultsAvailable = computed(
+			() => !!store.state.messageSearch?.done && store.state.messageSearch.cursor !== null
+		);
 		const oldScrollTop = ref(0);
 		const oldChatHeight = ref(0);
 
@@ -201,48 +320,59 @@ export default defineComponent({
 			return new Date(previousMessage.time).getDay() !== new Date(message.time).getDay();
 		};
 
-		const clearSearchState = () => {
-			offset.value = 0;
-			store.commit("messageSearchResults", null);
-			store.commit("messageSearchPendingQuery", null);
+		// Tells the server to stop a search still running, which it does at
+		// its next batch
+		const cancelSearch = () => {
+			const search = store.state.messageSearch;
+
+			if (search && !search.done) {
+				socket.emit("search:cancel", search.id);
+			}
 		};
 
-		const doSearch = () => {
+		const clearSearchState = () => {
+			cancelSearch();
+			store.commit("messageSearchResults", null);
+			store.commit("messageSearch", null);
+		};
+
+		const send = (cursor: SearchCursor | null) => {
 			if (!network.value || !channel.value) {
 				return;
 			}
 
-			clearSearchState(); // this is a new search, so we need to clear anything before that
-			const query: SearchQuery = {
+			const request: SearchRequest = {
+				id: nextSearchId++,
 				networkUuid: network.value.uuid,
 				channelName: channel.value.name,
 				searchTerm: String(route.query.q || ""),
-				offset: offset.value,
+				cursor,
 			};
-			store.commit("messageSearchPendingQuery", query);
+			store.commit("messageSearch", {
+				id: request.id,
+				cursor: null,
+				done: false,
+				more: cursor !== null,
+			});
 			searchSent();
-			socket.emit("search", query);
+			socket.emit("search", request);
+		};
+
+		const doSearch = () => {
+			clearSearchState(); // this is a new search, so we need to clear anything before that
+			send(null);
 		};
 
 		const onShowMoreClick = () => {
-			if (!chat.value || !network.value || !channel.value) {
+			const cursor = store.state.messageSearch?.cursor;
+
+			if (!chat.value || !cursor) {
 				return;
 			}
 
-			offset.value += 100;
-
 			oldScrollTop.value = chat.value.scrollTop;
 			oldChatHeight.value = chat.value.scrollHeight;
-
-			const query: SearchQuery = {
-				networkUuid: network.value.uuid,
-				channelName: channel.value.name,
-				searchTerm: String(route.query.q || ""),
-				offset: offset.value,
-			};
-			store.commit("messageSearchPendingQuery", query);
-			searchSent();
-			socket.emit("search", query);
+			send(cursor);
 		};
 
 		const jumpToBottom = async () => {
@@ -284,25 +414,25 @@ export default defineComponent({
 			}
 		);
 
+		// Results come in batches: the newest page keeps to the bottom, older
+		// ones keep what is in view where it is as they appear above it
 		watch(messages, async () => {
-			moreResultsAvailable.value = !!(
-				messages.value.length && !(messages.value.length % 100)
-			);
-
-			if (!offset.value) {
+			if (!more.value) {
 				await jumpToBottom();
-			} else {
-				await nextTick();
-
-				const el = chat.value;
-
-				if (!el) {
-					return;
-				}
-
-				const currentChatHeight = el.scrollHeight;
-				el.scrollTop = oldScrollTop.value + currentChatHeight - oldChatHeight.value;
+				return;
 			}
+
+			await nextTick();
+
+			const el = chat.value;
+
+			if (!el) {
+				return;
+			}
+
+			el.scrollTop = oldScrollTop.value + el.scrollHeight - oldChatHeight.value;
+			oldScrollTop.value = el.scrollTop;
+			oldChatHeight.value = el.scrollHeight;
 		});
 
 		onMounted(() => {
@@ -324,10 +454,11 @@ export default defineComponent({
 			loadMoreButton,
 			messages,
 			moreResultsAvailable,
+			searching,
+			more,
 			network,
 			channel,
 			route,
-			offset,
 			store,
 			setActiveChannel,
 			closeSearch,

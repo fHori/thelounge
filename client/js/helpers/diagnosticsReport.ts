@@ -22,7 +22,6 @@ export const scanReasons: Record<SearchScanReason, string> = {
 	"index-building": "index building",
 	"index-failed": "index failed",
 	"short-term": "under 3 chars",
-	"common-term": "common term",
 };
 
 export const ms = (value: number) =>
@@ -76,19 +75,27 @@ export function cgroupSummary(cgroup: NonNullable<Diagnostics["server"]["cgroup"
 }
 
 export function browserSearchSummary(s: BrowserSearch): string {
-	return `${ms(s.waitMs + s.renderMs)} (wait ${ms(s.waitMs)}, render ${ms(s.renderMs)}), ${s.results} results${s.offset ? `, offset ${s.offset}` : ""}`;
+	const first = s.firstMs === null ? "no results" : `first ${ms(s.firstMs)}`;
+	return `${ms(s.waitMs + s.renderMs)} (${first}, done ${ms(s.waitMs)}, render ${ms(s.renderMs)}), ${s.results} results${s.more ? ", older" : ""}`;
+}
+
+// Time not spent on the search itself: waiting for the storage thread, and
+// passing batches back and forth
+export function searchQueuedMs(s: SearchLogEntry): number {
+	return Math.max(0, s.totalMs - s.flushMs - s.indexMs - s.queryMs);
 }
 
 export function searchSummary(s: SearchLogEntry): string {
 	const how = s.reason ? `${s.strategy} (${scanReasons[s.reason]})` : s.strategy;
 	const filters = s.filters.length ? ` +${s.filters.join(",")}` : "";
-	const candidates = s.candidates === null ? "" : `, ${s.candidates} hits`;
-	const work = s.flushMs + s.indexMs + s.queryMs;
+	const examined = `${s.examined} ${s.strategy === "lookup" ? "hits" : "rows"} in ${s.batches} batches`;
+	const first = s.firstMs === null ? "no results" : `first ${ms(s.firstMs)}`;
+	const flags = `${s.more ? ", older" : ""}${s.cancelled ? ", cancelled" : ""}`;
 
 	return (
-		`${s.termLength} chars${filters} in ${s.scope}: ${how}${candidates}, ` +
-		`${s.results} results, ${ms(s.totalMs)} (query ${ms(s.queryMs)}, ` +
-		`index ${ms(s.indexMs)}, flush ${ms(s.flushMs)}, queued ${ms(Math.max(0, s.totalMs - work))})`
+		`${s.termLength} chars${filters} in ${s.scope}${flags}: ${how}, ${examined}, ` +
+		`${s.results} results, ${ms(s.totalMs)} (${first}, query ${ms(s.queryMs)}, ` +
+		`index ${ms(s.indexMs)}, flush ${ms(s.flushMs)}, queued ${ms(searchQueuedMs(s))})`
 	);
 }
 

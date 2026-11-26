@@ -14,8 +14,12 @@ const search: SearchLogEntry = {
 	scope: "all",
 	strategy: "scan",
 	reason: "index-building",
-	candidates: null,
+	examined: 14000000,
+	batches: 30,
 	results: 2,
+	firstMs: 900,
+	cancelled: false,
+	more: false,
 	flushMs: 0.2,
 	indexMs: 0,
 	queryMs: 19000,
@@ -88,8 +92,8 @@ describe("diagnosticsReport helper", function () {
 
 	it("says how a search went and where the time went", function () {
 		expect(searchSummary(search)).to.equal(
-			"7 chars in all: scan (index building), 2 results, 19500 ms " +
-				"(query 19000 ms, index 0.0 ms, flush 0.2 ms, queued 500 ms)"
+			"7 chars in all: scan (index building), 14000000 rows in 30 batches, 2 results, 19500 ms " +
+				"(first 900 ms, query 19000 ms, index 0.0 ms, flush 0.2 ms, queued 500 ms)"
 		);
 	});
 
@@ -98,7 +102,7 @@ describe("diagnosticsReport helper", function () {
 			standalone: true,
 			transport: "websocket",
 			roundTripMs: 40,
-			searches: [{at: 0, waitMs: 19600, renderMs: 80, results: 2, offset: 0}],
+			searches: [{at: 0, firstMs: 900, waitMs: 19600, renderMs: 80, results: 2, more: false}],
 		});
 
 		expect(report).to.include("Search index: building 42%");
@@ -107,9 +111,15 @@ describe("diagnosticsReport helper", function () {
 		expect(report).to.include("Search: 7 chars in all: scan (index building)");
 		expect(report).to.include("Cgroup: memory 900 MiB of 1 GiB, 2 CPUs");
 		expect(report).to.include(
-			"Browser search: 19680 ms (wait 19600 ms, render 80.0 ms), 2 results"
+			"Browser search: 19680 ms (first 900 ms, done 19600 ms, render 80.0 ms), 2 results"
 		);
 		expect(report.split("\n").length).to.be.at.most(20);
+	});
+
+	it("marks older pages and cancelled searches", function () {
+		expect(searchSummary({...search, more: true, cancelled: true, firstMs: null})).to.match(
+			/^7 chars in all, older, cancelled: .*\(no results, /
+		);
 	});
 
 	it("says when the storage thread is too busy to answer", function () {

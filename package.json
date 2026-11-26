@@ -142,7 +142,7 @@
     "postcss": "8.5.33",
     "postcss-import": "16.1.1",
     "postcss-loader": "8.2.2",
-    "postcss-preset-env": "10.4.0",
+    "postcss-preset-env": "11.6.3",
     "prettier": "3.10.1",
     "pretty-quick": "4.2.2",
     "primer-tooltips": "2.0.0",

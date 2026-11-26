@@ -11,7 +11,7 @@ socket.on("join", function (data) {
 		return;
 	}
 
-	const clientChan: ClientChan = toClientChan(data.chan);
+	const clientChan: ClientChan = toClientChan(data.chan, data.network);
 	network.channels.splice(data.index || -1, 0, clientChan);
 
 	// Queries do not automatically focus, unless the user did a whois

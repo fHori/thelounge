@@ -1,6 +1,7 @@
 import socket from "../socket";
 import {switchToChannel, navigate} from "../router";
 import {store} from "../store";
+import drafts from "../drafts";
 
 socket.on("quit", async function (data) {
 	// If we're in a channel, and it's on the network that is being removed,
@@ -9,6 +10,7 @@ socket.on("quit", async function (data) {
 		store.state.activeChannel && store.state.activeChannel.network.uuid === data.network;
 
 	store.commit("removeNetwork", data.network);
+	drafts.prune(store.state.networks);
 
 	if (!isCurrentNetworkBeingRemoved) {
 		return;

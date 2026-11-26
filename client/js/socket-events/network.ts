@@ -8,7 +8,7 @@ import {ChanState} from "../../../shared/types/chan";
 socket.on("network", function (data) {
 	const network: ClientNetwork = {
 		...data.network,
-		channels: data.network.channels.map(toClientChan),
+		channels: data.network.channels.map((c) => toClientChan(c, data.network.uuid)),
 		isJoinChannelShown: false,
 		isCollapsed: false,
 	};

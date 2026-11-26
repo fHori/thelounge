@@ -4,6 +4,7 @@ import {SharedNetworkChan} from "../../shared/types/network";
 import {SharedMsg, MessageType} from "../../shared/types/msg";
 import {ChanType} from "../../shared/types/chan";
 import {messageKey} from "../../shared/messageKey";
+import drafts from "./drafts";
 
 /**
  * Opts a message out of Vue's deep reactivity. Call this on every message
@@ -354,7 +355,7 @@ export function liveMessageLimit(channel: ClientChan, isActiveChannel: boolean):
 	return 0;
 }
 
-export function toClientChan(shared: SharedNetworkChan): ClientChan {
+export function toClientChan(shared: SharedNetworkChan, networkUuid?: string): ClientChan {
 	const history: string[] = [""].concat(
 		shared.messages
 			.filter((m) => m.self && m.text && m.type === MessageType.MESSAGE)
@@ -368,7 +369,7 @@ export function toClientChan(shared: SharedNetworkChan): ClientChan {
 	const channel: ClientChan = {
 		...props,
 		editTopic: false,
-		pendingMessage: "",
+		pendingMessage: networkUuid ? drafts.load(networkUuid, shared) : "",
 		inputHistoryPosition: 0,
 		historyLoading: false,
 		scrolledToBottom: true,

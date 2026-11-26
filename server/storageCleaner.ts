@@ -22,6 +22,16 @@ const status_types = [
 	MessageType.TOPIC_SET_BY,
 ];
 
+// How long one pass may keep the database busy. Passes are sized to fit it,
+// so that a big backlog goes in many short passes rather than a few long ones.
+const passMs = 20;
+// The break between passes while a backlog is left, for other queries
+const backlogPauseMs = 50;
+// The wait once everything old enough is gone
+const idlePauseMs = 5 * 60 * 1000;
+const minLimit = 100;
+const maxLimit = 20000;
+
 export class StorageCleaner {
 	db: Pick<MessageProvider, "isEnabled" | "deleteMessages">;
 	olderThanDays: number;
@@ -35,7 +45,7 @@ export class StorageCleaner {
 		this.errCount = 0;
 		this.isStopped = true;
 		this.db = db;
-		this.limit = 200;
+		this.limit = 200; // rows per pass, adjusted to passMs
 		const policy = Config.values.storagePolicy;
 		this.olderThanDays = policy.maxAgeDays;
 
@@ -88,8 +98,10 @@ export class StorageCleaner {
 		let num_deleted = 0;
 
 		try {
+			const started = Date.now();
 			num_deleted = await this.db.deleteMessages(req);
 			this.errCount = 0; // reset when it works
+			this.adjustLimit(Date.now() - started);
 		} catch (err: unknown) {
 			this.errCount++;
 			log.error("can't clean messages", err instanceof Error ? err.message : String(err));
@@ -107,10 +119,19 @@ export class StorageCleaner {
 		}
 
 		if (num_deleted < req.limit) {
-			this.schedule(5 * 60 * 1000);
+			this.schedule(idlePauseMs);
 		} else {
-			this.schedule(5000); // give others a chance to execute queries
+			this.schedule(backlogPauseMs); // give others a chance to execute queries
 		}
+	}
+
+	// Aims the next pass at passMs, growing at most twofold at a time
+	private adjustLimit(took: number) {
+		this.limit = Math.min(
+			this.limit * 2,
+			maxLimit,
+			Math.max(minLimit, Math.round((this.limit * passMs) / Math.max(1, took)))
+		);
 	}
 
 	private schedule(ms: number) {

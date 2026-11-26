@@ -8,6 +8,7 @@ import {MessageType} from "../../shared/types/msg.js";
 import Config from "../../server/config.js";
 import MessageStorage, {
 	currentSchemaVersion,
+	deletionQuery,
 	migrations,
 	necessaryMigrations,
 	rollbacks,
@@ -239,6 +240,62 @@ describe("SQLite unit tests", function () {
 		messages = await store.getMessages(net, chan, () => id++);
 		expect(messages.map((m) => m.type)).to.have.ordered.members([MessageType.AWAY]);
 	});
+
+	const cleanerPlan = (messageTypes: MessageType[] | null) => {
+		const {sql, params} = deletionQuery({messageTypes, limit: 200, olderThanDays: 30});
+		return store.database
+			.prepare(`EXPLAIN QUERY PLAN ${sql}`)
+			.all(...params)
+			.map((row) => (row as {detail: string}).detail)
+			.join(" | ");
+	};
+
+	it("should find the cleaner's oldest status rows through the type and time index", function () {
+		const plan = cleanerPlan([MessageType.JOIN, MessageType.PART, MessageType.QUIT]);
+		expect(plan).to.include("msg_type_time_idx (type=? AND time<?)");
+		expect(plan).to.not.match(/SCAN messages/);
+	});
+
+	it("should find the cleaner's oldest rows of any type through the time index", function () {
+		const plan = cleanerPlan(null);
+		expect(plan).to.include("INDEX time (time<?)");
+		expect(plan).to.not.include("TEMP B-TREE"); // already in time order
+	});
+
+	it("should delete the oldest rows of the given types first", async function () {
+		const baseDate = new Date();
+		const net = testNet("testnet");
+		const chan = testChan("#channel");
+		const types = [MessageType.JOIN, MessageType.MESSAGE, MessageType.PART, MessageType.QUIT];
+
+		// Interleaved, so that each type's oldest rows come from all over
+		for (let i = 0; i < 40; ++i) {
+			await store.index(
+				net,
+				chan,
+				new Msg({
+					time: dateAddDays(baseDate, -40 + i),
+					text: `msg ${i}`,
+					type: types[i % 4],
+				})
+			);
+		}
+
+		const delReq: DeletionRequest = {
+			messageTypes: [MessageType.JOIN, MessageType.PART, MessageType.QUIT],
+			limit: 6,
+			olderThanDays: 5,
+		};
+
+		expect(await store.deleteMessages(delReq)).to.equal(6);
+		let id = 0;
+		const left = (await store.getMessages(net, chan, () => id++)).map((m) => m.text);
+		const gone = Array.from({length: 40}, (_, i) => `msg ${i}`).filter(
+			(t) => !left.includes(t)
+		);
+		// msg 1, 5, 9 are messages and stay
+		expect(gone).to.deep.equal(["msg 0", "msg 2", "msg 3", "msg 4", "msg 6", "msg 7"]);
+	});
 });
 
 // Fresh databases as other builds create them, to check that this one takes
@@ -323,7 +380,7 @@ describe("SQLite databases from other builds", function () {
 						)
 						.pluck()
 						.all()
-				).to.deep.equal(["msg_type_idx", "network_channel_time", "time"]);
+				).to.deep.equal(["msg_type_time_idx", "network_channel_time", "time"]);
 
 				// The existing history is searchable through the new index
 				const found = await store.search({
@@ -741,6 +798,43 @@ describe("SQLite clearing history", function () {
 		expect(stored(store, big)).to.equal(0);
 		expect(await texts(store, other)).to.have.lengthOf(total / 4);
 		expect(pending(store)).to.equal(undefined);
+	});
+
+	// Everything older than a day, as the storage cleaner asks for it
+	const cleanerPass = (store: MessageStorage, limit: number) =>
+		store.deleteMessages({messageTypes: null, limit, olderThanDays: 1});
+
+	it("should leave merging the index until the cleaner's backlog is gone", async function () {
+		const store = await open();
+
+		expect(await cleanerPass(store, 500)).to.equal(500);
+		expect(merging(store)).to.deep.equal({automerge: 0, deletemerge: 0});
+		expect(pending(store)).to.be.a("string");
+
+		// Nothing is tidied up in between passes
+		await store.finishClearingHistory();
+		expect(merging(store)).to.deep.equal({automerge: 0, deletemerge: 0});
+
+		expect(await cleanerPass(store, 500)).to.equal(500);
+		expect(await cleanerPass(store, 5000)).to.equal(total - 1000);
+
+		await store.finishClearingHistory();
+		expect(pending(store)).to.equal(undefined);
+		expect(merging(store)).to.deep.equal({automerge: 4, deletemerge: 10});
+		expect(await search(store, "line")).to.deep.equal([]);
+		store.database.exec("INSERT INTO messages_fts(messages_fts) VALUES('integrity-check')");
+	});
+
+	it("should merge the index again after a restart in the cleaner's backlog", async function () {
+		const store = await open();
+		await cleanerPass(store, 500);
+		await store.close();
+
+		const again = await open();
+		await again.finishClearingHistory();
+		expect(pending(again)).to.equal(undefined);
+		expect(merging(again)).to.deep.equal({automerge: 4, deletemerge: 10});
+		expect(await texts(again, big)).to.have.lengthOf(total * 0.75 - 375);
 	});
 
 	it("should also hide what was said in between when cleared again", async function () {
@@ -1285,7 +1379,9 @@ describe("SQLite Message Storage", function () {
 
 	it("should index existing messages when migrating", async function () {
 		// Take the index away the way an older build rolling back would
-		const previous = migrations[migrations.length - 2].version;
+		// The one before the migration that added the index
+		const fts = migrations.findIndex((m) => m.version === 1794820000000);
+		const previous = migrations[fts - 1].version;
 		await store.downgrade_to(previous);
 		store.database
 			.prepare("UPDATE options SET value = ? WHERE name = 'schema_version'")

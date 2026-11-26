@@ -64,7 +64,7 @@ export const searchPageSize = 100;
 const newestCursor = Number.MAX_SAFE_INTEGER;
 type Rollback = {version: number; rollback_forbidden?: boolean; stmts: string[]};
 
-export const currentSchemaVersion = 1794820000000; // use `new Date().getTime()`
+export const currentSchemaVersion = 1795708469925; // use `new Date().getTime()`
 
 // Desired schema, adapt to the newest version and add migrations to the array below
 const schema = [
@@ -85,7 +85,8 @@ const schema = [
 	// Without the trailing time column every history query has to sort the whole channel.
 	"CREATE INDEX network_channel_time ON messages (network, channel, time)",
 	"CREATE INDEX time ON messages (time)",
-	"CREATE INDEX msg_type_idx on messages (type)", // needed for efficient storageCleaner queries
+	// The storage cleaner's queries: the oldest rows of the given types
+	"CREATE INDEX msg_type_time_idx ON messages (type, time)",
 	ftsTable,
 	ftsDeleteTrigger,
 ];
@@ -158,6 +159,16 @@ export const migrations: Migration[] = [
 			ftsDeleteTrigger,
 		],
 	},
+	{
+		// msg_type_idx plus time. With type alone, each storage cleaner pass
+		// sorted every old row of the deleted types by time: 1.2s per pass on
+		// a 5M message history, with the backlog still there.
+		version: 1795708469925,
+		stmts: [
+			"CREATE INDEX IF NOT EXISTS msg_type_time_idx ON messages (type, time)",
+			"DROP INDEX IF EXISTS msg_type_idx",
+		],
+	},
 ];
 
 // down migrations need to restore the state of the prior version.
@@ -197,7 +208,38 @@ export const rollbacks: Rollback[] = [
 			"DELETE FROM options WHERE name IN ('fts_backfill_next', 'fts_backfill_end')",
 		],
 	},
+	{
+		version: 1795708469925,
+		stmts: [
+			"CREATE INDEX IF NOT EXISTS msg_type_idx ON messages (type)",
+			"DROP INDEX IF EXISTS msg_type_time_idx",
+		],
+	},
 ];
+
+/**
+ * The storage cleaner's delete: the oldest `limit` rows of the given types
+ * (or of any type) older than `olderThanDays`. Served by msg_type_time_idx,
+ * or by the time index for all types, without sorting all old rows.
+ */
+export function deletionQuery(req: DeletionRequest, now = Date.now()) {
+	// We roughly get a timestamp from N days before.
+	// We don't adjust for daylight savings time or other weird time jumps
+	const millisecondsInDay = 24 * 60 * 60 * 1000;
+	const params: (string | number)[] = [now - req.olderThanDays * millisecondsInDay];
+	let where = "time <= ?";
+
+	if (req.messageTypes !== null) {
+		where += ` AND type IN (${req.messageTypes.map(() => "?").join(",")})`;
+		params.push(...req.messageTypes);
+	}
+
+	params.push(req.limit);
+	return {
+		sql: `DELETE FROM messages WHERE id IN (SELECT id FROM messages WHERE ${where} ORDER BY time ASC LIMIT ?)`,
+		params,
+	};
+}
 
 class Deferred {
 	resolve!: () => void;
@@ -295,6 +337,9 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 	private clearRows = 1000; // rows per step, adjusted to clearStepMs
 	private tidyPages = 100; // index pages per step, likewise
 	private ftsMergeOff = false;
+	// The storage cleaner has a backlog of old rows to delete. Like clearing
+	// a channel, its deletes leave the index's merging to tidying up after.
+	private cleanerBehind = false;
 
 	constructor(userName: string) {
 		this.userName = userName;
@@ -917,7 +962,8 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		const next = this.clears.entries().next();
 
 		if (next.done) {
-			return this.tidySearchIndexStep();
+			// Tidied up once the cleaner is through, which starts it again
+			return this.cleanerBehind || this.tidySearchIndexStep();
 		}
 
 		const [key, clear] = next.value;
@@ -1040,6 +1086,8 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		}
 
 		this.clearsPending = true;
+		// May have been left off, for the cleaner too: tidying turns it on
+		this.ftsMergeOff = true;
 
 		try {
 			for (const clear of JSON.parse(saved) as HistoryClear[]) {
@@ -1378,27 +1426,27 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 		// Flush any pending batched writes before deleting
 		await this.flushBatch();
 
-		let sql = "delete from messages where id in (select id from messages where\n";
+		const {sql, params} = deletionQuery(req);
+		const deleted = await this.serialize_run(sql, ...params);
 
-		// We roughly get a timestamp from N days before.
-		// We don't adjust for daylight savings time or other weird time jumps
-		const millisecondsInDay = 24 * 60 * 60 * 1000;
-		const deleteBefore = Date.now() - req.olderThanDays * millisecondsInDay;
-		sql += "time <= ?\n";
-		const params: (string | number)[] = [deleteBefore];
+		if (req.limit > 0 && deleted === req.limit) {
+			// More to come. Merging the index as rows go out made passes
+			// take up to 3s on a big history; it is off until the backlog
+			// is gone, and saved as pending so that a restart turns it back on.
+			if (!this.cleanerBehind) {
+				this.cleanerBehind = true;
+				this.setFtsMerging(false);
+				this.saveHistoryClears();
+			}
+		} else if (this.cleanerBehind) {
+			this.cleanerBehind = false;
 
-		if (req.messageTypes !== null) {
-			const placeholder = new Array(req.messageTypes.length).fill("?").join(",");
-			sql += `and type in (${placeholder})\n`;
-			params.push(...req.messageTypes);
+			if (!this.clearTimer) {
+				this.runClearSteps();
+			}
 		}
 
-		sql += "order by time asc\n";
-		sql += "limit ?\n";
-		params.push(req.limit);
-		sql += ")";
-
-		return this.serialize_run(sql, ...params);
+		return deleted;
 	}
 
 	/**

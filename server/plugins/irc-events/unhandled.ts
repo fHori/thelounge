@@ -4,7 +4,7 @@ import Msg from "../../models/msg.js";
 import {MessageType} from "../../../shared/types/msg.js";
 
 // Commands handled by other plugins - don't display as unhandled
-const handledCommands = new Set(["SPGROUPS", "SPJOIN"]);
+const handledCommands = new Set(["MARKREAD", "SPGROUPS", "SPJOIN"]);
 
 export default <IrcEventHandler>function (irc, network) {
 	irc.on("unknown command", (command) => {

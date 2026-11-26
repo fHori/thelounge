@@ -71,6 +71,7 @@ socket.on("auth:start", async function (serverHash) {
 			token,
 			lastMessage,
 			openChannel,
+			visible: document.visibilityState === "visible",
 			hasConfig: store.state.serverConfiguration !== null,
 		});
 	} else {

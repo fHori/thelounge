@@ -5,7 +5,8 @@ import Chan from "../../../server/models/chan.js";
 import Network from "../../../server/models/network.js";
 import message from "../../../server/plugins/irc-events/message.js";
 import {compileHighlightRegex} from "../../../server/highlights.js";
-import {ChanState} from "../../../shared/types/chan.js";
+import {ChanState, ChanType} from "../../../shared/types/chan.js";
+import {READ_MARKER_CAP} from "../../../server/plugins/readMarker.js";
 
 type Pushed = {title: string; body: string};
 
@@ -42,6 +43,11 @@ function setup(notifyAllMessages?: boolean, highlights: HighlightLists = {}) {
 				},
 			},
 		},
+		saved: 0,
+		createChannel: (attr: Partial<Chan>) => new Chan(attr),
+		save() {
+			client.saved++;
+		},
 		emit() {},
 	};
 
@@ -54,7 +60,7 @@ function setup(notifyAllMessages?: boolean, highlights: HighlightLists = {}) {
 	const say = (text: string, extra: Record<string, unknown> = {}) =>
 		irc.emit("privmsg", {nick: "bob", target: "#test", message: text, ...extra});
 
-	return {irc, chan, pushed, say};
+	return {irc, chan, network, client, pushed, say};
 }
 
 describe("message event web push", function () {
@@ -86,6 +92,37 @@ describe("message event web push", function () {
 		say("in a muted channel");
 
 		expect(pushed).to.have.lengthOf(0);
+	});
+
+	it("leaves out mentions already read on another client", function () {
+		const {chan, pushed, say} = setup();
+		const now = Date.now();
+		chan.readMarker = now - 1000;
+
+		// Played back by the bouncer, read on the phone meanwhile
+		say("hello me", {time: now - 60 * 1000});
+		expect(pushed).to.have.lengthOf(0);
+
+		say("hello me again", {time: now});
+		expect(pushed.map((p) => p.body)).to.deep.equal(["bob: hello me again"]);
+	});
+});
+
+describe("message event read marker", function () {
+	it("asks for the marker of a conversation that starts mid-session", function () {
+		const {irc, network, client} = setup();
+		const raw: string[][] = [];
+		Object.assign(irc, {
+			network: {cap: {isEnabled: (name: string) => name === READ_MARKER_CAP}},
+			raw: (...args: string[]) => raw.push(args),
+		});
+		network.irc = irc as unknown as Network["irc"];
+
+		irc.emit("privmsg", {nick: "carol", target: "me", message: "while you were away"});
+
+		expect(network.getChannel("carol")?.type).to.equal(ChanType.QUERY);
+		expect(raw).to.deep.include(["MARKREAD", "carol"]);
+		expect(client.saved).to.equal(1);
 	});
 });
 

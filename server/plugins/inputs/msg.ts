@@ -3,6 +3,7 @@ import Msg from "../../models/msg.js";
 import Chan from "../../models/chan.js";
 import {MessageType} from "../../../shared/types/msg.js";
 import {ChanType} from "../../../shared/types/chan.js";
+import {requestReadMarker} from "../readMarker.js";
 
 const commands = ["query", "msg", "say"];
 
@@ -76,6 +77,7 @@ const input: PluginInputHandler = function (network, chan, cmd, args) {
 			});
 			this.save();
 			newChan.loadMessages(this, network);
+			requestReadMarker(network, newChan);
 		}
 	}
 

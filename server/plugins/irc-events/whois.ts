@@ -3,6 +3,7 @@ import Client, {IrcEventHandler} from "../../client.js";
 import Msg from "../../models/msg.js";
 import {MessageType} from "../../../shared/types/msg.js";
 import {ChanType} from "../../../shared/types/chan.js";
+import {requestReadMarker} from "../readMarker.js";
 
 interface WhoisData {
 	nick: string;
@@ -50,6 +51,7 @@ export default <IrcEventHandler>function (this: Client, irc, network) {
 					index: network.addChannel(chan),
 				});
 				chan.loadMessages(this, network);
+				requestReadMarker(network, chan);
 				this.save();
 			}
 		}

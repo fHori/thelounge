@@ -15,9 +15,16 @@ function fakeProvider(stored: Msg[]) {
 		isEnabled: true,
 		reads: 0,
 		canProvideMessages: () => true,
-		getMessages(_network: unknown, _chan: unknown, ensureIdAbove: (maxId: number) => void) {
+		lastLimit: 0,
+		getMessages(
+			_network: unknown,
+			_chan: unknown,
+			ensureIdAbove: (maxId: number) => void,
+			limit = Config.values.maxHistory
+		) {
 			this.reads++;
-			const page = stored.slice(-Config.values.maxHistory);
+			this.lastLimit = limit;
+			const page = stored.slice(-limit);
 			ensureIdAbove(Math.max(0, ...page.map((m) => m.id)));
 			return Promise.resolve(page);
 		},
@@ -93,6 +100,49 @@ describe("History paging", function () {
 		expect(emitted).to.have.lengthOf(1);
 		expect(emitted[0].data.messages).to.have.lengthOf(100);
 		expect(emitted[0].data.hasMore).to.equal(true);
+	});
+
+	it("reads only the newest rows on first open, and pages the rest from storage", async function () {
+		Config.values.maxHistory = 10000;
+
+		try {
+			const {chan, network, client, provider, emitted} = setup(1000);
+
+			chan.loadMessages(client, network as any, true);
+			await settle();
+
+			expect(provider.lastLimit).to.equal(200);
+			expect(chan.messages.map((m) => m.id)).to.deep.equal(
+				Array.from({length: 200}, (_, i) => 801 + i)
+			);
+			expect(emitted[0].data.messages).to.have.lengthOf(100);
+			expect(emitted[0].data.hasMore).to.equal(true);
+
+			// what a client does after the first page (901-1000)
+			const seen = emitted[0].data.messages.map((m: Msg) => m.id) as number[];
+			let hasMore = true;
+			let requests = 0;
+
+			while (hasMore) {
+				const page = await client.more({
+					target: chan.id,
+					lastId: seen[0],
+					condensed: false,
+					beforeTime: seen[0] * 1000,
+				});
+
+				// rows at the anchor's millisecond come again, clients drop them
+				const fresh = page!.messages.map((m) => m.id).filter((id) => !seen.includes(id));
+				seen.unshift(...fresh);
+				hasMore = page!.hasMore;
+
+				expect(++requests).to.be.lessThan(20, "paging did not terminate");
+			}
+
+			expect(seen).to.deep.equal(Array.from({length: 1000}, (_, i) => i + 1));
+		} finally {
+			Config.values.maxHistory = 150;
+		}
 	});
 
 	it("does not duplicate messages that arrived before the first open", async function () {

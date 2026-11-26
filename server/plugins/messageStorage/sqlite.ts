@@ -1086,13 +1086,10 @@ class SqliteMessageStorage implements SearchableMessageStorage {
 	async getMessages(
 		network: Network,
 		channel: Channel,
-		ensureIdAbove: (maxId: number) => void
+		ensureIdAbove: (maxId: number) => void,
+		limit = historyLimit(Config.values.maxHistory)
 	): Promise<Message[]> {
-		const messages = await this.getChannelHistory(
-			network.uuid,
-			channel.name,
-			historyLimit(Config.values.maxHistory)
-		);
+		const messages = await this.getChannelHistory(network.uuid, channel.name, limit);
 
 		// Ensure client.idMsg is higher than any loaded message ID
 		ensureIdAbove(maxMessageId(messages));

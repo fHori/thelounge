@@ -24,7 +24,8 @@ interface MessageStorage {
 	getMessages(
 		network: Network,
 		channel: Channel,
-		ensureIdAbove: (maxId: number) => void
+		ensureIdAbove: (maxId: number) => void,
+		limit?: number
 	): Promise<Message[]>;
 
 	canProvideMessages(): boolean;

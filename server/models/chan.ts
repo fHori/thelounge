@@ -14,6 +14,12 @@ import {SharedNetworkChan} from "../../shared/types/network.js";
 import {messageKey} from "../../shared/messageKey.js";
 import {sendReadMarkerIfBeingRead} from "../plugins/readMarker.js";
 
+// The first read of a channel's history takes only its newest rows: a quiet
+// channel or a DM has each row on its own page of the database, so reading
+// all of maxHistory on a cold disk took seconds (15s on a slow one). Older
+// pages come from storage as the client scrolls back.
+const firstLoadRows = 200;
+
 const UNREAD_LOG_LIMIT = 10000;
 
 export type ChanConfig = {
@@ -347,10 +353,17 @@ class Chan {
 			return;
 		}
 
+		const limit = Math.min(historyLimit(), firstLoadRows);
+
 		client.messageProvider
-			.getMessages(network, this, (maxId) => {
-				client.idMsg = Math.max(client.idMsg, maxId + 1);
-			})
+			.getMessages(
+				network,
+				this,
+				(maxId) => {
+					client.idMsg = Math.max(client.idMsg, maxId + 1);
+				},
+				limit
+			)
 			.then((stored) => {
 				if (stored.length === 0) {
 					if (!lazy && network.irc!.network.cap.isEnabled("znc.in/playback")) {
@@ -399,7 +412,7 @@ class Chan {
 					totalMessages: this.messages.length,
 					// Anything older than what is sent here is still reachable,
 					// either from memory or straight from storage
-					hasMore: messages.length > toSend.length || stored.length >= historyLimit(),
+					hasMore: messages.length > toSend.length || stored.length >= limit,
 				});
 
 				if (!lazy && network.irc!.network.cap.isEnabled("znc.in/playback")) {

@@ -238,14 +238,15 @@ export default class ThreadedSqliteMessageStorage implements MessageProvider {
 	async getMessages(
 		network: Network,
 		channel: Channel,
-		ensureIdAbove: (maxId: number) => void
+		ensureIdAbove: (maxId: number) => void,
+		limit = historyLimit(Config.values.maxHistory)
 	): Promise<Msg[]> {
 		const messages = await this.read<Message[]>(
 			[],
 			"getChannelHistory",
 			network.uuid,
 			channel.name,
-			historyLimit(Config.values.maxHistory)
+			limit
 		);
 		const loaded = messages.map(toMsg);
 

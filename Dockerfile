@@ -33,7 +33,8 @@ RUN if [ -n "$VERSION" ]; then \
 		sed -i -E '0,/"version": "[^"]*"/s//"version": "'"$VERSION"'"/' package.json \
 		&& grep -q '"version": "'"$VERSION"'"' package.json; \
 	fi \
-	&& NODE_ENV=production THELOUNGE_BUILD_COMMIT="$GIT_COMMIT" THELOUNGE_SKIP_TYPECHECK="$THELOUNGE_SKIP_TYPECHECK" yarn build
+	&& NODE_ENV=production THELOUNGE_BUILD_COMMIT="$GIT_COMMIT" THELOUNGE_SKIP_TYPECHECK="$THELOUNGE_SKIP_TYPECHECK" yarn build \
+	&& find public -name '*.map' -delete
 
 # Runtime dependencies for the target platform (better-sqlite3 is native).
 FROM base AS deps

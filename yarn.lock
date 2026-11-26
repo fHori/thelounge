@@ -3150,6 +3150,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@types/subset-font@npm:2.3.0":
+  version: 2.3.0
+  resolution: "@types/subset-font@npm:2.3.0"
+  dependencies:
+    "@types/node": "npm:*"
+  checksum: 10c0/2137b97111deeea64edcb14a40abcd4e4b116f266b086ea36f0198a1748e9e2cd739934b82b83e5060d3c5a7e708d5e89a0981f3cccccf3550cd9939df6979b2
+  languageName: node
+  linkType: hard
+
 "@types/ua-parser-js@npm:0.7.39":
   version: 0.7.39
   resolution: "@types/ua-parser-js@npm:0.7.39"
@@ -6167,6 +6176,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"fontverter@npm:^2.0.0":
+  version: 2.1.0
+  resolution: "fontverter@npm:2.1.0"
+  dependencies:
+    wawoff2: "npm:^2.0.0"
+    woff2sfnt-sfnt2woff: "npm:^1.0.0"
+  checksum: 10c0/e3fc43d9e040569a5425d386be2107d91bc51a865dee980dae57b4234e0109ddc3899588972cfb6afb1714dd43a86d2b0c3282702bbf18137ba6097541454364
+  languageName: node
+  linkType: hard
+
 "for-each@npm:^0.3.3, for-each@npm:^0.3.5":
   version: 0.3.5
   resolution: "for-each@npm:0.3.5"
@@ -6523,6 +6542,13 @@ __metadata:
   version: 1.0.4
   resolution: "grapheme-splitter@npm:1.0.4"
   checksum: 10c0/108415fb07ac913f17040dc336607772fcea68c7f495ef91887edddb0b0f5ff7bc1d1ab181b125ecb2f0505669ef12c9a178a3bbd2dd8e042d8c5f1d7c90331a
+  languageName: node
+  linkType: hard
+
+"harfbuzzjs@npm:^1.6.1":
+  version: 1.6.4
+  resolution: "harfbuzzjs@npm:1.6.4"
+  checksum: 10c0/85cd10d5083ff2fc8f9707ce188ecc6ccb6633bdb39ab9ba8a8b399edcc9ed1a14bb382350432c4fe2b15bb96f6ab1a5701ef2e2829383dbb73288053ad8b499
   languageName: node
   linkType: hard
 
@@ -8528,7 +8554,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"p-limit@npm:^3.0.2":
+"p-limit@npm:^3.0.2, p-limit@npm:^3.1.0":
   version: 3.1.0
   resolution: "p-limit@npm:3.1.0"
   dependencies:
@@ -8599,6 +8625,13 @@ __metadata:
     registry-url: "npm:^6.0.1"
     semver: "npm:^7.6.0"
   checksum: 10c0/4a55648d820496326730a7b149fd3fd8382e96f3d6def5ec687f46b75063894acf06b21f79832b40bb094c821d97f532cb0f009f85c4102d0084b488d4f492d3
+  languageName: node
+  linkType: hard
+
+"pako@npm:^1.0.7":
+  version: 1.0.11
+  resolution: "pako@npm:1.0.11"
+  checksum: 10c0/86dd99d8b34c3930345b8bbeb5e1cd8a05f608eeb40967b293f72fe469d0e9c88b783a8777e4cc7dc7c91ce54c5e93d88ff4b4f060e6ff18408fd21030d9ffbe
   languageName: node
   linkType: hard
 
@@ -10617,6 +10650,17 @@ __metadata:
   languageName: node
   linkType: hard
 
+"subset-font@npm:2.9.0":
+  version: 2.9.0
+  resolution: "subset-font@npm:2.9.0"
+  dependencies:
+    fontverter: "npm:^2.0.0"
+    harfbuzzjs: "npm:^1.6.1"
+    p-limit: "npm:^3.1.0"
+  checksum: 10c0/23f772b3e836ef1298f6d1218744733f7dd8c581ee2d85ecfb68acddadc98029b31bc44b148216468ac5b5c26120c681517db1a055c44c595eee7a84a136732e
+  languageName: node
+  linkType: hard
+
 "supports-color@npm:^5.3.0":
   version: 5.5.0
   resolution: "supports-color@npm:5.5.0"
@@ -10762,6 +10806,7 @@ __metadata:
     "@types/semver": "npm:7.8.0"
     "@types/sinon": "npm:^22.0.2"
     "@types/sortablejs": "npm:1.15.9"
+    "@types/subset-font": "npm:2.3.0"
     "@types/ua-parser-js": "npm:0.7.39"
     "@types/web-push": "npm:3.6.4"
     "@types/webpack-env": "npm:1.18.8"
@@ -10827,6 +10872,7 @@ __metadata:
     sortablejs: "npm:1.15.7"
     stylelint: "npm:18.1.0"
     stylelint-config-standard: "npm:41.1.0"
+    subset-font: "npm:2.9.0"
     tlds: "npm:1.261.0"
     tsx: "npm:^4.20.6"
     typescript: "npm:6.0.3"
@@ -11529,6 +11575,18 @@ __metadata:
   languageName: node
   linkType: hard
 
+"wawoff2@npm:^2.0.0":
+  version: 2.0.1
+  resolution: "wawoff2@npm:2.0.1"
+  dependencies:
+    argparse: "npm:^2.0.1"
+  bin:
+    woff2_compress.js: bin/woff2_compress.js
+    woff2_decompress.js: bin/woff2_decompress.js
+  checksum: 10c0/98a286b60114e15ed578bbeeef1759b4890a1e8106e1486d8d0d4106b8e6c7a99c4c1d1b64afc76a83893dae040cc19a59dd64cffd5754b5337b5c82efed3d12
+  languageName: node
+  linkType: hard
+
 "web-push@npm:4.0.0":
   version: 4.0.0
   resolution: "web-push@npm:4.0.0"
@@ -11857,6 +11915,15 @@ __metadata:
   version: 2.0.1
   resolution: "wildcard@npm:2.0.1"
   checksum: 10c0/08f70cd97dd9a20aea280847a1fe8148e17cae7d231640e41eb26d2388697cbe65b67fd9e68715251c39b080c5ae4f76d71a9a69fa101d897273efdfb1b58bf7
+  languageName: node
+  linkType: hard
+
+"woff2sfnt-sfnt2woff@npm:^1.0.0":
+  version: 1.0.0
+  resolution: "woff2sfnt-sfnt2woff@npm:1.0.0"
+  dependencies:
+    pako: "npm:^1.0.7"
+  checksum: 10c0/2af93bdb98c511e1615bd2f31df023bf96c91922197ab7c1401177a0e77ae3528b53b0aeef57ee69e79857cffc8bdb974d7557089b0d999f1765c41ebc1e7ab5
   languageName: node
   linkType: hard
 

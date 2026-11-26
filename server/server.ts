@@ -36,6 +36,7 @@ import type {
 import {ChanType} from "../shared/types/chan.js";
 import type {SearchResultsChunk} from "../shared/types/storage.js";
 import {isSearchCursor} from "./searchCursor.js";
+import {getCacheBust, precompressed, setStaticHeaders} from "./staticAssets.js";
 import {setBrowserVisible} from "./plugins/readMarker.js";
 import {
 	LockedSharedConfiguration,
@@ -91,6 +92,7 @@ export default async function (
 		redirect: false,
 		maxAge: 86400 * 1000,
 	};
+	const publicRoot = Utils.getFileFromRelativeToRoot("public");
 
 	const app = express();
 
@@ -106,7 +108,14 @@ export default async function (
 		.get("/service-worker.js", forceNoCacheRequest)
 		.get("/js/bundle.js.map", forceNoCacheRequest)
 		.get("/css/style.css.map", forceNoCacheRequest)
-		.use(express.static(Utils.getFileFromRelativeToRoot("public"), staticOptions))
+		// The dev server serves its own in-memory build, never what is on disk
+		.use(options.dev ? noop : precompressed(publicRoot))
+		.use(
+			express.static(publicRoot, {
+				...staticOptions,
+				...(options.dev ? {} : {setHeaders: setStaticHeaders}),
+			})
+		)
 		.use("/storage/", express.static(Config.getStoragePath(), staticOptions));
 
 	if (Config.values.fileUpload.enable) {
@@ -469,8 +478,14 @@ function forceNoCacheRequest(_req: Request, res: Response, next: NextFunction) {
 	return next();
 }
 
+function noop(_req: Request, _res: Response, next: NextFunction) {
+	return next();
+}
+
 function indexRequest(_req: Request, res: Response) {
 	res.setHeader("Content-Type", "text/html");
+	// Names the current ?v= assets, so it is always revalidated
+	res.setHeader("Cache-Control", "no-cache");
 
 	fs.readFile(Utils.getFileFromRelativeToRoot("client/index.html.tpl"), "utf-8", (err, file) => {
 		if (err) {
@@ -481,7 +496,7 @@ function indexRequest(_req: Request, res: Response) {
 
 		const config: IndexTemplateConfiguration = {
 			...getServerConfiguration(),
-			...{cacheBust: Helper.getVersionCacheBust()},
+			...{cacheBust: getCacheBust()},
 		};
 
 		res.send(_.template(file)(config));

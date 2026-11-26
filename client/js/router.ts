@@ -3,22 +3,49 @@ import constants from "./constants";
 import {createRouter, createWebHashHistory, type RouteParamsRawGeneric} from "vue-router";
 import SignIn from "../components/Windows/SignIn.vue";
 import Connect from "../components/Windows/Connect.vue";
-import Settings from "../components/Windows/Settings.vue";
-import Help from "../components/Windows/Help.vue";
-import Changelog from "../components/Windows/Changelog.vue";
-import NetworkEdit from "../components/Windows/NetworkEdit.vue";
 import SearchResults from "../components/Windows/SearchResults.vue";
 import RoutedChat from "../components/RoutedChat.vue";
 import {store} from "./store";
 
-import AppearanceSettings from "../components/Settings/Appearance.vue";
-import GeneralSettings from "../components/Settings/General.vue";
-import AccountSettings from "../components/Settings/Account.vue";
-import NotificationSettings from "../components/Settings/Notifications.vue";
-import TrackerSettings from "../components/Settings/Trackers.vue";
 import {ClientChan} from "./types";
 import {leaveHistorySlice, trimMessages} from "./chan";
 import {shouldShowGeneralSettings} from "./helpers/settingsTabs";
+
+// Loaded on first use; prefetched once the page is idle so they also work offline
+const Settings = () =>
+	import(
+		/* webpackChunkName: "settings", webpackPrefetch: true */ "../components/Windows/Settings.vue"
+	);
+const Help = () =>
+	import(/* webpackChunkName: "help", webpackPrefetch: true */ "../components/Windows/Help.vue");
+const Changelog = () =>
+	import(
+		/* webpackChunkName: "help", webpackPrefetch: true */ "../components/Windows/Changelog.vue"
+	);
+const NetworkEdit = () =>
+	import(
+		/* webpackChunkName: "network-edit", webpackPrefetch: true */ "../components/Windows/NetworkEdit.vue"
+	);
+const AppearanceSettings = () =>
+	import(
+		/* webpackChunkName: "settings", webpackPrefetch: true */ "../components/Settings/Appearance.vue"
+	);
+const GeneralSettings = () =>
+	import(
+		/* webpackChunkName: "settings", webpackPrefetch: true */ "../components/Settings/General.vue"
+	);
+const AccountSettings = () =>
+	import(
+		/* webpackChunkName: "settings", webpackPrefetch: true */ "../components/Settings/Account.vue"
+	);
+const NotificationSettings = () =>
+	import(
+		/* webpackChunkName: "settings", webpackPrefetch: true */ "../components/Settings/Notifications.vue"
+	);
+const TrackerSettings = () =>
+	import(
+		/* webpackChunkName: "settings", webpackPrefetch: true */ "../components/Settings/Trackers.vue"
+	);
 
 const router = createRouter({
 	history: createWebHashHistory(),

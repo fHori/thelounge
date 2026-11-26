@@ -2,6 +2,8 @@ import path from "node:path";
 import {fileURLToPath} from "node:url";
 import {readFileSync} from "node:fs";
 import crypto from "node:crypto";
+import {promisify} from "node:util";
+import zlib from "node:zlib";
 import {execSync} from "node:child_process";
 import webpack from "webpack";
 import CopyPlugin from "copy-webpack-plugin";
@@ -11,7 +13,7 @@ import {VueLoaderPlugin} from "vue-loader";
 import babelConfig from "./babel.config.cjs";
 import postcssConfig from "./postcss.config.js";
 
-const {DefinePlugin, NormalModuleReplacementPlugin} = webpack;
+const {Compilation, DefinePlugin, NormalModuleReplacementPlugin, sources} = webpack;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -63,9 +65,55 @@ const createForkTsCheckerPlugin = (withBuild) =>
 		},
 	});
 
+const brotli = promisify(zlib.brotliCompress);
+const gzip = promisify(zlib.gzip);
+
+// Writes .br and .gz next to each text asset; server/staticAssets.ts serves them
+class PrecompressPlugin {
+	apply(compiler) {
+		compiler.hooks.thisCompilation.tap("PrecompressPlugin", (compilation) => {
+			compilation.hooks.processAssets.tapPromise(
+				{
+					name: "PrecompressPlugin",
+					stage: Compilation.PROCESS_ASSETS_STAGE_OPTIMIZE_TRANSFER,
+				},
+				async (assets) => {
+					// The dev server serves from memory and never reads these
+					if (compiler.watchMode) {
+						return;
+					}
+
+					const jobs = Object.entries(assets)
+						.filter(([name]) => /\.(js|css|svg|ico|webmanifest|json)$/.test(name))
+						.map(async ([name, asset]) => {
+							const input = asset.buffer();
+
+							if (input.length < 1024) {
+								return;
+							}
+
+							const [br, gz] = await Promise.all([
+								brotli(input, {
+									params: {[zlib.constants.BROTLI_PARAM_QUALITY]: 11},
+								}),
+								gzip(input, {level: 9}),
+							]);
+
+							compilation.emitAsset(`${name}.br`, new sources.RawSource(br));
+							compilation.emitAsset(`${name}.gz`, new sources.RawSource(gz));
+						});
+
+					await Promise.all(jobs);
+				}
+			);
+		});
+	}
+}
+
 const createMiniCssExtractPlugin = () =>
 	new MiniCssExtractPlugin({
 		filename: "css/style.css",
+		chunkFilename: "css/chunk.[contenthash:8].css",
 	});
 
 const copyPatterns = (isProduction) => [
@@ -117,6 +165,8 @@ function createBaseConfig(mode, isProduction) {
 			clean: true,
 			path: resolveFromRoot("public"),
 			filename: "[name]",
+			// Content-hashed: served as immutable (server/staticAssets.ts)
+			chunkFilename: "js/chunk.[contenthash:8].js",
 			publicPath: "/",
 		},
 		performance: {
@@ -214,6 +264,7 @@ function createBaseConfig(mode, isProduction) {
 			createMiniCssExtractPlugin(),
 			new CopyPlugin({patterns: copyPatterns(isProduction)}),
 			new NormalModuleReplacementPlugin(/debug/, resolveFromRoot("scripts/noop.js")),
+			...(isProduction ? [new PrecompressPlugin()] : []),
 		],
 	};
 }
@@ -260,6 +311,8 @@ function applyDevelopmentOverrides(config) {
 	devConfig.output = {
 		...(devConfig.output ?? {}),
 		path: resolveFromRoot("test/public"),
+		// Loaded with require(), so CommonJS whatever package.json says
+		chunkFilename: "js/chunk.[id].cjs",
 	};
 	devConfig.entry = {
 		...(devConfig.entry ?? {}),

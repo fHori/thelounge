@@ -6,13 +6,27 @@ import {TextareaEditor} from "@textcomplete/textarea";
 
 import fuzzy from "fuzzy";
 
-import emojiMap from "./helpers/simplemap.json" with {type: "json"};
 import {store} from "./store";
 import {ChanType} from "../../shared/types/chan";
 
 export default enableAutocomplete;
 
-const emojiSearchTerms = Object.keys(emojiMap);
+// Only needed once someone types ":xx"
+let emojiMap: Record<string, string> = {};
+let emojiSearchTerms: string[] = [];
+let emojiMapLoad: Promise<void> | undefined;
+
+function loadEmojiMap() {
+	emojiMapLoad ??= import(
+		/* webpackChunkName: "emoji", webpackPrefetch: true */ "./helpers/simplemap.json"
+	).then((module: {default: Record<string, string>}) => {
+		emojiMap = module.default;
+		emojiSearchTerms = Object.keys(emojiMap);
+	});
+
+	return emojiMapLoad;
+}
+
 const emojiStrategy: StrategyProps = {
 	id: "emoji",
 	match: /(^|\s):([-+\w:?]{2,}):?$/,
@@ -20,7 +34,7 @@ const emojiStrategy: StrategyProps = {
 		// Trim colon from the matched term,
 		// as we are unable to get a clean string from match regex
 		term = term.replace(/:$/, "");
-		callback(fuzzyGrep(term, emojiSearchTerms));
+		void loadEmojiMap().then(() => callback(fuzzyGrep(term, emojiSearchTerms)));
 	},
 	template([string, original]: [string, string]) {
 		return `<span class="emoji">${String(emojiMap[original])}</span> ${string}`;

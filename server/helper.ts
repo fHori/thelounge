@@ -9,7 +9,6 @@ import {
 	passwordHashSync,
 	passwordRequiresUpdate,
 } from "./password.js";
-import crypto from "node:crypto";
 import {execSync} from "node:child_process";
 
 export type Hostmask = {

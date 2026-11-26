@@ -4,15 +4,27 @@ import type Client from "../../../server/client.js";
 import Chan from "../../../server/models/chan.js";
 import Network from "../../../server/models/network.js";
 import message from "../../../server/plugins/irc-events/message.js";
+import {compileHighlightRegex} from "../../../server/highlights.js";
 import {ChanState} from "../../../shared/types/chan.js";
 
 type Pushed = {title: string; body: string};
 
-function setup(notifyAllMessages?: boolean) {
+type HighlightLists = {
+	global?: string;
+	globalExceptions?: string;
+	network?: string;
+	networkExceptions?: string;
+	ignoreGlobal?: boolean;
+};
+
+function setup(notifyAllMessages?: boolean, highlights: HighlightLists = {}) {
 	const irc = Object.assign(new EventEmitter(), {user: {nick: "me"}});
 	const chan = new Chan({name: "#test", state: ChanState.JOINED});
 	const network = new Network({host: "example.com", channels: [chan]});
 	network.highlightRegex = /\bme\b/i;
+	network.customHighlightRegex = compileHighlightRegex(highlights.network);
+	network.customHighlightExceptionRegex = compileHighlightRegex(highlights.networkExceptions);
+	network.ignoreGlobalHighlights = !!highlights.ignoreGlobal;
 
 	const pushed: Pushed[] = [];
 	const client = {
@@ -21,6 +33,8 @@ function setup(notifyAllMessages?: boolean) {
 		messageStorage: [],
 		mentions: [],
 		config: {clientSettings: {notifyAllMessages}},
+		highlightRegex: compileHighlightRegex(highlights.global),
+		highlightExceptionRegex: compileHighlightRegex(highlights.globalExceptions),
 		manager: {
 			webPush: {
 				push(_client: unknown, payload: Pushed) {
@@ -72,5 +86,73 @@ describe("message event web push", function () {
 		say("in a muted channel");
 
 		expect(pushed).to.have.lengthOf(0);
+	});
+});
+
+describe("message event custom highlights", function () {
+	// Only highlights get pushed by default, so the pushes show what was highlighted
+	const highlighted = (highlights: HighlightLists, lines: string[]) => {
+		const {pushed, say} = setup(false, highlights);
+
+		lines.forEach((line) => say(line));
+
+		// Pushes after the first say "… and N other messages" on later lines
+		return pushed.map((p) => p.body.split("\n")[0].replace(/^bob: /, ""));
+	};
+
+	it("highlights words from the network's own list", function () {
+		expect(
+			highlighted({network: "deploy, oncall"}, ["the deploy is done", "lunch?"])
+		).to.deep.equal(["the deploy is done"]);
+	});
+
+	it("uses the global list and the network list together", function () {
+		expect(
+			highlighted({global: "release", network: "deploy"}, [
+				"release time",
+				"deploy time",
+				"nap time",
+			])
+		).to.deep.equal(["release time", "deploy time"]);
+	});
+
+	it("lets the network's exceptions cancel a global highlight", function () {
+		expect(
+			highlighted({global: "release", networkExceptions: "release notes"}, [
+				"release time",
+				"see the release notes",
+			])
+		).to.deep.equal(["release time"]);
+	});
+
+	it("lets the network's exceptions cancel a nick highlight", function () {
+		expect(highlighted({networkExceptions: "bot"}, ["hello me", "bot: ping me"])).to.deep.equal(
+			["hello me"]
+		);
+	});
+
+	it("skips global highlights on a network that opts out", function () {
+		expect(
+			highlighted({global: "release", network: "deploy", ignoreGlobal: true}, [
+				"release time",
+				"deploy time",
+				"hello me",
+			])
+		).to.deep.equal(["deploy time", "hello me"]);
+	});
+
+	it("keeps global exceptions on a network that opts out of global highlights", function () {
+		expect(
+			highlighted({globalExceptions: "bot", ignoreGlobal: true}, ["hello me", "bot: ping me"])
+		).to.deep.equal(["hello me"]);
+	});
+
+	it("still applies global exceptions to the network's highlights", function () {
+		expect(
+			highlighted({network: "deploy", globalExceptions: "dry run"}, [
+				"deploy now",
+				"deploy dry run",
+			])
+		).to.deep.equal(["deploy now"]);
 	});
 });

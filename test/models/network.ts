@@ -122,6 +122,9 @@ describe("Network", function () {
 				username: "",
 				realname: "",
 				leaveMessage: "",
+				highlights: "",
+				highlightExceptions: "",
+				ignoreGlobalHighlights: false,
 				sasl: "plain",
 				saslAccount: "testaccount",
 				saslPassword: "testpassword",
@@ -180,6 +183,22 @@ describe("Network", function () {
 			expect(network.realname).to.equal(network.nick);
 			expect(network.password).to.equal("");
 			expect(network.leaveMessage).to.equal("");
+		});
+
+		it("should compile the network's custom highlights", function () {
+			const network = new Network({
+				host: "localhost",
+				highlights: "deploy,  on call ,",
+				highlightExceptions: 42,
+			} as unknown as Partial<Network>);
+
+			expect(network.customHighlightRegex).to.equal(null);
+			expect(network.validate({} as Client)).to.equal(true);
+			expect(network.highlightExceptions).to.equal("");
+			expect(network.customHighlightExceptionRegex).to.equal(null);
+			expect("time to deploy!").to.match(network.customHighlightRegex!);
+			expect("who is on call?").to.match(network.customHighlightRegex!);
+			expect("redeploy").to.not.match(network.customHighlightRegex!);
 		});
 
 		it("should enforce lockNetwork", function () {
@@ -393,6 +412,9 @@ describe("Network", function () {
 				saslAccount: 1337,
 				saslPassword: 1337,
 				commands: "/command 1 2 3\r\n/ping HELLO\r\r\r\r/whois test\r\n\r\n",
+				highlights: "deploy, oncall",
+				highlightExceptions: 1234,
+				ignoreGlobalHighlights: "true",
 				ip: "newIp",
 				hostname: "newHostname",
 				uuid: "newuuid",
@@ -426,6 +448,11 @@ describe("Network", function () {
 				"/ping HELLO",
 				"/whois test",
 			]);
+			expect(network.highlights).to.equal("deploy, oncall");
+			expect(network.highlightExceptions).to.equal("1234");
+			expect(network.ignoreGlobalHighlights).to.equal(true);
+			expect("oncall: hi").to.match(network.customHighlightRegex!);
+			expect("1234 go").to.match(network.customHighlightExceptionRegex!);
 		});
 	});
 

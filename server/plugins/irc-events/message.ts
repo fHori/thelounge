@@ -144,15 +144,24 @@ export default <IrcEventHandler>function (this: Client, irc, network) {
 		if (!msg.highlight && !msg.self) {
 			msg.highlight = network.highlightRegex?.test(data.message);
 
-			// If we still don't have a highlight, test against custom highlights if there's any
-			if (!msg.highlight && this.highlightRegex) {
+			// If we still don't have a highlight, test against custom highlights:
+			// the user's global ones (unless this network opts out), then its own
+			if (!msg.highlight && this.highlightRegex && !network.ignoreGlobalHighlights) {
 				msg.highlight = this.highlightRegex.test(cleanMessage);
+			}
+
+			if (!msg.highlight && network.customHighlightRegex) {
+				msg.highlight = network.customHighlightRegex.test(cleanMessage);
 			}
 		}
 
-		// if highlight exceptions match, do not highlight at all
-		if (msg.highlight && this.highlightExceptionRegex) {
-			msg.highlight = !this.highlightExceptionRegex.test(cleanMessage);
+		// if highlight exceptions match, global or for this network, do not highlight at all
+		if (msg.highlight && this.highlightExceptionRegex?.test(cleanMessage)) {
+			msg.highlight = false;
+		}
+
+		if (msg.highlight && network.customHighlightExceptionRegex?.test(cleanMessage)) {
+			msg.highlight = false;
 		}
 
 		if (data.group) {

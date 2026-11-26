@@ -1,7 +1,6 @@
 import _ from "lodash";
 import {UAParser} from "ua-parser-js";
 import {v4 as uuidv4} from "uuid";
-import escapeRegExp from "lodash/escapeRegExp.js";
 import crypto from "crypto";
 import colors from "chalk";
 
@@ -10,6 +9,7 @@ import Chan, {ChanConfig} from "./models/chan.js";
 import Msg from "./models/msg.js";
 import Config from "./config.js";
 import {condensedTypes} from "../shared/irc.js";
+import {compileHighlightRegex} from "./highlights.js";
 import {migrateRenamedSettings} from "../shared/settings.js";
 import {messageKey} from "../shared/messageKey.js";
 import {MessageType} from "../shared/types/msg.js";
@@ -422,6 +422,9 @@ class Client {
 			username: args.username || "",
 			realname: args.realname || "",
 			leaveMessage: args.leaveMessage || "",
+			highlights: args.highlights || "",
+			highlightExceptions: args.highlightExceptions || "",
+			ignoreGlobalHighlights: !!args.ignoreGlobalHighlights,
 			sasl: args.sasl || "",
 			saslAccount: args.saslAccount || "",
 			saslPassword: args.saslPassword || "",
@@ -644,34 +647,9 @@ class Client {
 	}
 
 	compileCustomHighlights() {
-		function compileHighlightRegex(customHighlightString: string) {
-			if (typeof customHighlightString !== "string") {
-				return null;
-			}
-
-			// Ensure we don't have empty strings in the list of highlights
-			const highlightsTokens = customHighlightString
-				.split(",")
-				.map((highlight) => escapeRegExp(highlight.trim()))
-				.filter((highlight) => highlight.length > 0);
-
-			if (highlightsTokens.length === 0) {
-				return null;
-			}
-
-			return new RegExp(
-				`(?:^|[ .,+!?|/:<>(){}'"@&~-])(?:${highlightsTokens.join(
-					"|"
-				)})(?:$|[ .,+!?|/:<>(){}'"-])`,
-				"i"
-			);
-		}
-
-		this.highlightRegex = compileHighlightRegex(
-			this.config.clientSettings.highlights as string
-		);
+		this.highlightRegex = compileHighlightRegex(this.config.clientSettings.highlights);
 		this.highlightExceptionRegex = compileHighlightRegex(
-			this.config.clientSettings.highlightExceptions as string
+			this.config.clientSettings.highlightExceptions
 		);
 	}
 

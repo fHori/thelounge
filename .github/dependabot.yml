@@ -33,6 +33,15 @@ updates:
       # skips this checker (THELOUNGE_SKIP_TYPECHECK), so its checks pass.
       - dependency-name: fork-ts-checker-webpack-plugin
         versions: [">=9.2.0"]
+      # 6 needs Node.js 22, this project supports 20; it only colors the log
+      - dependency-name: chalk
+        update-types: ["version-update:semver-major"]
+      # typescript-eslint doesn't support 7 yet
+      - dependency-name: typescript
+        versions: [">=7.0.0"]
+      # Types for the Node.js the images run, not the newest one
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     open-pull-requests-limit: 10
 
   - package-ecosystem: github-actions

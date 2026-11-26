@@ -23,7 +23,7 @@ export function createSettingsStore(store: Store<State>) {
 				store.commit("serverHasSettings", true);
 
 				for (const name in state) {
-					if (config[name].sync !== "never" || config[name].sync === "always") {
+					if (config[name].sync !== "never" && config[name].sync !== "server") {
 						socket.emit("setting:set", {name, value: state[name]});
 					}
 				}
@@ -45,7 +45,12 @@ export function createSettingsStore(store: Store<State>) {
 					return;
 				}
 
-				if (
+				if (settingConfig.sync === "server") {
+					// Only the server decides these, whether settings sync is on or not
+					if (sync) {
+						return;
+					}
+				} else if (
 					sync === false &&
 					(state.syncSettings === false || settingConfig.sync === "never")
 				) {
@@ -53,7 +58,7 @@ export function createSettingsStore(store: Store<State>) {
 				}
 
 				commit("set", {name, value});
-				storage.set("settings", JSON.stringify(state));
+				saveToLocalStorage(state);
 				settingConfig.apply(store, value);
 
 				if (!sync) {
@@ -69,6 +74,19 @@ export function createSettingsStore(store: Store<State>) {
 			},
 		},
 	};
+}
+
+// Server-owned settings are not kept, the server sends them on every load
+function saveToLocalStorage(state: SettingsState) {
+	const stored: Record<string, unknown> = {};
+
+	for (const name in state) {
+		if (config[name]?.sync !== "server") {
+			stored[name] = state[name];
+		}
+	}
+
+	storage.set("settings", JSON.stringify(stored));
 }
 
 function loadFromLocalStorage(): Record<string, unknown> {
@@ -113,6 +131,7 @@ function assignStoredSettings(
 	for (const key in defaultSettings) {
 		// Make sure the setting in local storage has the same type that the code expects
 		if (
+			config[key]?.sync !== "server" &&
 			typeof storedSettings[key] !== "undefined" &&
 			typeof defaultSettings[key] === typeof storedSettings[key]
 		) {

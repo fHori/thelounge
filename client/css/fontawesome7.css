@@ -13,23 +13,46 @@
  *   (regular), e.g. the DM section collapse caret and filter icon.
  * - The only icon class used in markup is `fas fa-reply` (Message.vue).
  * Add glyph classes back here if new markup uses `fa-*` classes.
+ * The @font-face rules are written by scripts/subset-icons.mjs: rerun it after
+ * using a new icon.
  */
+
+/* subset-icons:begin */
+@font-face {
+	font-family: "Font Awesome 7 Pro";
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src: url("../fonts/font-awesome/fa-regular-400-full.woff2?v=ab8ce5bf") format("woff2");
+}
 
 @font-face {
 	font-family: "Font Awesome 7 Pro";
 	font-style: normal;
 	font-weight: 400;
-	font-display: block;
-	src: url("../fonts/font-awesome/fa-regular-400.woff2") format("woff2");
+	font-display: swap;
+	src: url("../fonts/font-awesome/fa-regular-400.woff2?v=2e8fe80e") format("woff2");
+	unicode-range: U+E49A, U+E4E2, U+F002, U+F005, U+F007, U+F00C-F00D, U+F013, U+F017, U+F021, U+F028, U+F02E, U+F03A, U+F03E, U+F053-F054, U+F057, U+F059-F05A, U+F05E, U+F060, U+F067-F068, U+F06A, U+F06E, U+F070-F071, U+F075, U+F078, U+F084, U+F086, U+F08D-F08E, U+F093, U+F0A1, U+F0AC, U+F0B0, U+F0C0-F0C1, U+F0C6, U+F0C9, U+F0D7, U+F0DA, U+F0E0, U+F0F3, U+F101, U+F104-F105, U+F107-F108, U+F118, U+F127, U+F132, U+F142, U+F14E, U+F15B-F15C, U+F164, U+F188, U+F19D, U+F1D8, U+F1DA, U+F1E6, U+F1F6, U+F1F8, U+F1FA, U+F201, U+F233, U+F253, U+F256, U+F28B, U+F2BD, U+F2C2, U+F2F5-F2F6, U+F303-F304, U+F336, U+F359, U+F35D, U+F3E5, U+F439-F43A, U+F43F, U+F441, U+F443, U+F445, U+F447, U+F506, U+F51E, U+F54C, U+F619, U+F6A9, U+F77C;
 }
 
 @font-face {
 	font-family: "Font Awesome 7 Pro";
 	font-style: normal;
 	font-weight: 900;
-	font-display: block;
-	src: url("../fonts/font-awesome/fa-solid-900.woff2") format("woff2");
+	font-display: swap;
+	src: url("../fonts/font-awesome/fa-solid-900-full.woff2?v=46b45d34") format("woff2");
 }
+
+@font-face {
+	font-family: "Font Awesome 7 Pro";
+	font-style: normal;
+	font-weight: 900;
+	font-display: swap;
+	src: url("../fonts/font-awesome/fa-solid-900.woff2?v=6dd79eb4") format("woff2");
+	unicode-range: U+E49A, U+E4E2, U+F002, U+F005, U+F007, U+F00C-F00D, U+F013, U+F017, U+F021, U+F028, U+F02E, U+F03A, U+F03E, U+F053-F054, U+F057, U+F059-F05A, U+F05E, U+F060, U+F067-F068, U+F06A, U+F06E, U+F070-F071, U+F075, U+F078, U+F084, U+F086, U+F08D-F08E, U+F093, U+F0A1, U+F0AC, U+F0B0, U+F0C0-F0C1, U+F0C6, U+F0C9, U+F0D7, U+F0DA, U+F0E0, U+F0F3, U+F101, U+F104-F105, U+F107-F108, U+F118, U+F127, U+F132, U+F142, U+F14E, U+F15B-F15C, U+F164, U+F188, U+F19D, U+F1D8, U+F1DA, U+F1E6, U+F1F6, U+F1F8, U+F1FA, U+F201, U+F233, U+F253, U+F256, U+F28B, U+F2BD, U+F2C2, U+F2F5-F2F6, U+F303-F304, U+F336, U+F359, U+F35D, U+F3E5, U+F439-F43A, U+F43F, U+F441, U+F443, U+F445, U+F447, U+F506, U+F51E, U+F54C, U+F619, U+F6A9, U+F77C;
+}
+
+/* subset-icons:end */
 
 :root {
 	--fa-font-regular: normal 400 1em/1 "Font Awesome 7 Pro";

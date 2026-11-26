@@ -9,6 +9,7 @@
 	<link rel="preload" as="script" href="js/bundle.vendor.js?v=<%- cacheBust %>">
 	<link rel="preload" as="script" href="js/bundle.js?v=<%- cacheBust %>">
 
+	<link rel="preload" as="font" type="font/woff2" crossorigin href="fonts/font-awesome/fa-solid-900.woff2?v=6dd79eb4">
 	<link rel="stylesheet" href="css/style.css?v=<%- cacheBust %>">
 	<link id="theme" rel="stylesheet" href="themes/<%- theme %>.css" data-server-theme="<%- theme %>">
 	<% _.forEach(stylesheets, function(css) { %>

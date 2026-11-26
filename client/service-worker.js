@@ -44,8 +44,23 @@ self.addEventListener("fetch", function (event) {
 		return;
 	}
 
-	event.respondWith(networkOrCache(event));
+	event.respondWith(isVersioned(path) ? cacheOrNetwork(event) : networkOrCache(event));
 });
+
+// URLs that name one version of a file (see server/staticAssets.ts)
+function isVersioned(path) {
+	return (
+		/[?&]v=/.test(path) ||
+		/^(?:js\/chunk\.[0-9a-f]{8,}\.js|css\/chunk\.[0-9a-f]{8,}\.css)$/.test(path)
+	);
+}
+
+async function cacheOrNetwork(event) {
+	const cache = await caches.open(cacheName);
+	const cached = await cache.match(event.request);
+
+	return cached || networkOrCache(event, "default");
+}
 
 async function putInCache(request, response) {
 	const cache = await caches.open(cacheName);
@@ -67,10 +82,10 @@ async function cleanRedirect(response) {
 	});
 }
 
-async function networkOrCache(event) {
+async function networkOrCache(event, cacheMode = "no-cache") {
 	try {
 		let response = await fetch(event.request, {
-			cache: "no-cache",
+			cache: cacheMode,
 			redirect: "follow",
 		});
 

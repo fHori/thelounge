@@ -9,7 +9,6 @@ import {
 	passwordHashSync,
 	passwordRequiresUpdate,
 } from "./password.js";
-import crypto from "node:crypto";
 import {execSync} from "node:child_process";
 
 export type Hostmask = {
@@ -21,7 +20,6 @@ export type Hostmask = {
 const Helper = {
 	expandHome,
 	getVersion,
-	getVersionCacheBust,
 	getVersionNumber,
 	getGitCommit,
 	ip2hex,
@@ -83,12 +81,6 @@ function getGitCommit() {
 		_gitCommit = null;
 		return null;
 	}
-}
-
-function getVersionCacheBust() {
-	const hash = crypto.createHash("sha256").update(Helper.getVersion()).digest("hex");
-
-	return hash.substring(0, 10);
 }
 
 function ip2hex(address: string) {

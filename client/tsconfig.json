@@ -19,7 +19,13 @@
     "strict": true,
     // if using webpack 2+ or rollup, to leverage tree shaking:
     "module": "esnext",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
+    // vuex declares its types outside its "exports" map, so "bundler"
+    // resolution would leave it quietly untyped: point at them
+    "paths": {"vuex": ["../node_modules/vuex/types/index.d.ts"]},
+    // Global types the client uses: process.env (set by webpack), NodeJS.Timeout,
+    // require.context. TypeScript 6 no longer loads every @types package.
+    "types": ["node", "webpack-env"],
 
     // TODO: Remove eventually
     "noImplicitAny": false /*Enable error reporting for expressions and declarations with an implied any type. See more: https://www.typescriptlang.org/tsconfig#noImplicitAny */

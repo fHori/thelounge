@@ -153,7 +153,7 @@
     "stylelint": "18.1.0",
     "stylelint-config-standard": "41.1.0",
     "tsx": "^4.20.6",
-    "typescript": "5.9.3",
+    "typescript": "6.0.3",
     "undate": "0.3.0",
     "vue": "3.5.46",
     "vue-eslint-parser": "10.4.2",

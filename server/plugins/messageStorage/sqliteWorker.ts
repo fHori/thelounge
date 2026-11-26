@@ -5,7 +5,7 @@ import {parentPort} from "node:worker_threads";
 import log from "../../log.js";
 import SqliteMessageStorage, {StoredRow} from "./sqlite.js";
 import type {DeletionRequest} from "./types.js";
-import type {SearchQuery} from "../../../shared/types/storage.js";
+import type {SearchBatchQuery} from "../../../shared/types/storage.js";
 
 export type StorageRequest = {
 	// Set when the server waits for the answer
@@ -78,7 +78,7 @@ const methods = {
 	getChannelHistory: (store: number, networkUuid: string, channelName: string, limit: number) =>
 		get(store).getChannelHistory(networkUuid, channelName, limit),
 	getMaxMessageId: (store: number) => get(store).getMaxMessageId(),
-	search: (store: number, query: SearchQuery) => get(store).search(query),
+	searchBatch: (store: number, query: SearchBatchQuery) => get(store).searchBatch(query),
 	getMessagesBefore: (
 		store: number,
 		...args: Parameters<SqliteMessageStorage["getMessagesBefore"]>

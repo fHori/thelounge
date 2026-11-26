@@ -27,7 +27,7 @@ import Network, {
 import ClientManager from "./clientManager.js";
 import {MessageStorage, MessageProvider} from "./plugins/messageStorage/types.js";
 import {StorageCleaner} from "./storageCleaner.js";
-import {SearchQuery, SearchResponse} from "../shared/types/storage.js";
+import {SearchCursor, SearchQuery, SearchRequest, SearchResponse} from "../shared/types/storage.js";
 import {SharedChan, ChanType} from "../shared/types/chan.js";
 import {SharedNetwork} from "../shared/types/network.js";
 import {ServerToClientEvents} from "../shared/types/socket-events.js";
@@ -842,6 +842,26 @@ class Client {
 		for (const messageStorage of this.messageStorage) {
 			messageStorage.deleteChannel(target.network, target.chan).catch((e) => log.error(e));
 		}
+	}
+
+	/**
+	 * Searches a page newest first, handing results over in batches as they
+	 * are found; see ThreadedSqliteMessageStorage.searchStream. Resolves with
+	 * the cursor for older results, null when there are none.
+	 */
+	async searchStream(
+		request: Omit<SearchRequest, "id">,
+		onResults: (results: Msg[]) => void,
+		cancelled: () => boolean
+	): Promise<SearchCursor | null> {
+		if (
+			!(this.messageProvider instanceof ThreadedSqliteMessageStorage) ||
+			!this.messageProvider.isEnabled
+		) {
+			return null;
+		}
+
+		return this.messageProvider.searchStream(request, onResults, cancelled);
 	}
 
 	async search(query: SearchQuery): Promise<SearchResponse> {

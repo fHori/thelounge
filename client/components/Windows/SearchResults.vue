@@ -34,8 +34,19 @@
 						role="progressbar"
 						aria-label="Searching"
 					/>
-					<div ref="chat" class="chat" tabindex="-1" :aria-busy="searching">
-						<div v-show="moreResultsAvailable || (searching && more)" class="show-more">
+					<div
+						ref="chat"
+						class="chat"
+						tabindex="-1"
+						:aria-busy="searching"
+						@scroll.passive="onScroll"
+					>
+						<div
+							v-show="
+								renderStart === 0 && (moreResultsAvailable || (searching && more))
+							"
+							class="show-more"
+						>
 							<button
 								ref="loadMoreButton"
 								:disabled="searching || !store.state.isConnected"
@@ -74,13 +85,14 @@
 							aria-relevant="additions"
 						>
 							<div
-								v-for="(message, id) in messages"
+								v-for="(message, idx) in renderedMessages"
 								:key="messageKey(message)"
 								class="result"
+								:data-key="messageKey(message)"
 								:data-jump-to="store.state.settings.searchEnabled || undefined"
 							>
 								<DateMarker
-									v-if="shouldDisplayDateMarker(message, id)"
+									v-if="shouldDisplayDateMarker(idx)"
 									:key="messageKey(message) + '-date'"
 									:message="message"
 								/>
@@ -225,12 +237,18 @@ import MessageSearchForm from "../MessageSearchForm.vue";
 import DateMarker from "../DateMarker.vue";
 import {watch, computed, defineComponent, nextTick, ref, onMounted, onUnmounted} from "vue";
 import type {ClientMessage} from "../../js/types";
+import {startsNewDay} from "../../js/helpers/messageMarkers";
 
 import {useStore} from "../../js/store";
 import {useRoute} from "vue-router";
 import {switchToChannel} from "../../js/router";
 import type {SearchCursor, SearchRequest} from "../../../shared/types/storage";
 import {messageKey} from "../../../shared/messageKey";
+
+// Results rendered at most: a search can find thousands. The window moves
+// by a step as the view nears either end of what is rendered.
+const MAX_RENDERED_RESULTS = 300;
+const RENDER_STEP = 100;
 
 // Ids tell this browser's searches apart, so late results of a replaced one
 // are dropped
@@ -259,8 +277,6 @@ export default defineComponent({
 		const moreResultsAvailable = computed(
 			() => !!store.state.messageSearch?.done && store.state.messageSearch.cursor !== null
 		);
-		const oldScrollTop = ref(0);
-		const oldChatHeight = ref(0);
 
 		const messages = computed(() => {
 			const results = store.state.messageSearchResults?.results;
@@ -309,14 +325,105 @@ export default defineComponent({
 			switchToChannel(channel.value);
 		};
 
-		const shouldDisplayDateMarker = (message: ClientMessage, id: number) => {
-			const previousMessage = messages.value[id - 1];
+		// Index of the first rendered result. Kept at the newest results
+		// until the view moves away from them.
+		const windowStart = ref(0);
+		const windowAtEnd = ref(true);
 
-			if (!previousMessage) {
-				return true;
+		const renderStart = computed(() => {
+			const max = Math.max(0, messages.value.length - MAX_RENDERED_RESULTS);
+			return windowAtEnd.value ? max : Math.min(windowStart.value, max);
+		});
+
+		const renderedMessages = computed(() =>
+			messages.value.slice(renderStart.value, renderStart.value + MAX_RENDERED_RESULTS)
+		);
+
+		const shouldDisplayDateMarker = (idx: number) =>
+			startsNewDay(messages.value, renderStart.value + idx);
+
+		// The first result in view and where it is, to put it back there
+		// after the rendered results change around it
+		const viewAnchor = () => {
+			const el = chat.value;
+
+			if (!el) {
+				return null;
 			}
 
-			return new Date(previousMessage.time).getDay() !== new Date(message.time).getDay();
+			const top = el.getBoundingClientRect().top;
+
+			for (const row of el.querySelectorAll<HTMLElement>(".result")) {
+				const rect = row.getBoundingClientRect();
+
+				if (rect.bottom > top) {
+					return {key: row.dataset.key, offset: rect.top - top};
+				}
+			}
+
+			return null;
+		};
+
+		const restoreAnchor = (anchor: ReturnType<typeof viewAnchor>) => {
+			const el = chat.value;
+
+			if (!el || !anchor) {
+				return;
+			}
+
+			const row = el.querySelector<HTMLElement>(`.result[data-key="${anchor.key}"]`);
+
+			if (row) {
+				el.scrollTop +=
+					row.getBoundingClientRect().top -
+					el.getBoundingClientRect().top -
+					anchor.offset;
+			}
+		};
+
+		const moveWindow = async (start: number) => {
+			const max = Math.max(0, messages.value.length - MAX_RENDERED_RESULTS);
+			start = Math.max(0, Math.min(start, max));
+
+			if (start === renderStart.value) {
+				return;
+			}
+
+			const anchor = viewAnchor();
+			windowStart.value = start;
+			windowAtEnd.value = start === max;
+			await nextTick();
+			restoreAnchor(anchor);
+		};
+
+		let scrollQueued = false;
+
+		const onScroll = () => {
+			if (scrollQueued) {
+				return;
+			}
+
+			scrollQueued = true;
+
+			requestAnimationFrame(() => {
+				scrollQueued = false;
+				const el = chat.value;
+
+				if (!el) {
+					return;
+				}
+
+				const margin = el.clientHeight * 1.5;
+
+				if (el.scrollTop < margin && renderStart.value > 0) {
+					void moveWindow(renderStart.value - RENDER_STEP);
+				} else if (
+					el.scrollHeight - el.scrollTop - el.clientHeight < margin &&
+					!windowAtEnd.value
+				) {
+					void moveWindow(renderStart.value + RENDER_STEP);
+				}
+			});
 		};
 
 		// Tells the server to stop a search still running, which it does at
@@ -358,6 +465,8 @@ export default defineComponent({
 
 		const doSearch = () => {
 			clearSearchState(); // this is a new search, so we need to clear anything before that
+			windowStart.value = 0;
+			windowAtEnd.value = true;
 			send(null);
 		};
 
@@ -368,8 +477,10 @@ export default defineComponent({
 				return;
 			}
 
-			oldScrollTop.value = chat.value.scrollTop;
-			oldChatHeight.value = chat.value.scrollHeight;
+			// Older results go in front of what is rendered, which is the
+			// start of the list when this button shows
+			windowStart.value = 0;
+			windowAtEnd.value = false;
 			send(cursor);
 		};
 
@@ -413,24 +524,17 @@ export default defineComponent({
 		);
 
 		// Results come in batches: the newest page keeps to the bottom, older
-		// ones keep what is in view where it is as they appear above it
+		// ones keep what is in view where it is as they appear above it. This
+		// runs before the new results are rendered.
 		watch(messages, async () => {
 			if (!more.value) {
 				await jumpToBottom();
 				return;
 			}
 
+			const anchor = viewAnchor();
 			await nextTick();
-
-			const el = chat.value;
-
-			if (!el) {
-				return;
-			}
-
-			el.scrollTop = oldScrollTop.value + el.scrollHeight - oldChatHeight.value;
-			oldScrollTop.value = el.scrollTop;
-			oldChatHeight.value = el.scrollHeight;
+			restoreAnchor(anchor);
 		});
 
 		onMounted(() => {
@@ -451,6 +555,9 @@ export default defineComponent({
 			chat,
 			loadMoreButton,
 			messages,
+			renderedMessages,
+			renderStart,
+			onScroll,
 			moreResultsAvailable,
 			searching,
 			more,

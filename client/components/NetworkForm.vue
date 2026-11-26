@@ -1,34 +1,28 @@
 <template>
-	<div id="connect" class="window" role="tabpanel" aria-label="Connect">
+	<div id="connect" ref="windowEl" class="window" role="tabpanel" aria-label="Connect">
 		<div class="header">
 			<SidebarToggle />
 		</div>
-		<aside v-if="tabbed" class="settings-menu network-menu">
-			<h2>Edit {{ defaults.name }}</h2>
-			<ul role="tablist" aria-label="Network settings">
-				<li v-for="tab in tabs" :key="tab.id" role="presentation">
+		<nav v-if="sectioned" class="settings-menu network-menu" aria-label="Network sections">
+			<ul>
+				<li v-for="section in sections" :key="section.id">
 					<button
-						:id="'network-tab-' + tab.id"
 						type="button"
-						role="tab"
-						:class="['icon', 'network-tab-' + tab.id, {active: activeTab === tab.id}]"
-						:aria-selected="activeTab === tab.id"
-						:aria-controls="'network-panel-' + tab.id"
-						@click="activeTab = tab.id"
+						:class="[
+							'icon',
+							'network-section-' + section.id,
+							{active: activeSection === section.id},
+						]"
+						:aria-current="activeSection === section.id ? 'true' : undefined"
+						@click="jumpTo(section.id)"
 					>
-						{{ tab.name }}
+						{{ section.name }}
 					</button>
 				</li>
 			</ul>
-		</aside>
-		<form
-			:class="['container', {tabbed}]"
-			method="post"
-			action=""
-			@submit.prevent="onSubmit"
-			@invalid.capture="onInvalid"
-		>
-			<h1 v-if="!tabbed" class="title">
+		</nav>
+		<form class="container" method="post" action="" @submit.prevent="onSubmit">
+			<h1 class="title">
 				<template v-if="defaults.uuid">
 					<input v-model="defaults.uuid" type="hidden" name="uuid" />
 					Edit {{ defaults.name }}
@@ -38,10 +32,9 @@
 					<template v-if="config?.lockNetwork"> to {{ defaults.name }} </template>
 				</template>
 			</h1>
-			<input v-if="tabbed" v-model="defaults.uuid" type="hidden" name="uuid" />
-			<div v-show="showPanel('connection')" v-bind="panelAttrs('connection')">
+			<section v-bind="sectionAttrs('connection')">
 				<template v-if="!config?.lockNetwork">
-					<h2 v-if="!tabbed">Network settings</h2>
+					<h2>{{ heading("connection") }}</h2>
 					<div class="connect-row">
 						<label for="connect:name">Name</label>
 						<input
@@ -200,7 +193,7 @@
 				<template
 					v-else-if="config.lockNetwork && !store.state.serverConfiguration?.public"
 				>
-					<h2 v-if="!tabbed">Network settings</h2>
+					<h2>{{ heading("connection") }}</h2>
 					<div class="connect-row">
 						<label for="connect:name">Name</label>
 						<input
@@ -229,10 +222,10 @@
 						</RevealPassword>
 					</div>
 				</template>
-			</div>
+			</section>
 
-			<div v-show="showPanel('identity')" v-bind="panelAttrs('identity')">
-				<h2 v-if="!tabbed">User preferences</h2>
+			<section v-bind="sectionAttrs('identity')">
+				<h2>{{ heading("identity") }}</h2>
 				<div class="connect-row">
 					<label for="connect:nick">Nick</label>
 					<input
@@ -347,18 +340,10 @@ the server tab on new connection"
 						</div>
 					</template>
 				</template>
-			</div>
-			<div
-				v-if="!store.state.serverConfiguration?.public"
-				v-show="showPanel('auth')"
-				v-bind="panelAttrs('auth')"
-			>
-				<h2 v-if="!tabbed" id="label-auth">Authentication</h2>
-				<div
-					class="connect-row connect-auth"
-					role="group"
-					:aria-labelledby="tabbed ? 'network-tab-auth' : 'label-auth'"
-				>
+			</section>
+			<section v-if="!store.state.serverConfiguration?.public" v-bind="sectionAttrs('auth')">
+				<h2 id="label-auth">{{ heading("auth") }}</h2>
+				<div class="connect-row connect-auth" role="group" aria-labelledby="label-auth">
 					<label class="opt">
 						<input
 							:checked="!defaults.sasl"
@@ -432,9 +417,10 @@ the server tab on new connection"
 					</p>
 					<pre><code>/msg NickServ CERT ADD</code></pre>
 				</div>
-			</div>
+			</section>
 
-			<div v-if="tabbed" v-show="showPanel('highlights')" v-bind="panelAttrs('highlights')">
+			<section v-if="sectioned" v-bind="sectionAttrs('highlights')">
+				<h2>{{ heading("highlights") }}</h2>
 				<div class="connect-row">
 					<label for="connect:highlights">
 						Words
@@ -514,7 +500,7 @@ Global exceptions always apply."
 						</label>
 					</div>
 				</div>
-			</div>
+			</section>
 
 			<div>
 				<button type="submit" class="btn" :disabled="disabled ? true : false">
@@ -534,34 +520,34 @@ Global exceptions always apply."
 	-moz-osx-font-smoothing: grayscale;
 }
 
-#connect .network-tab-connection::before {
+#connect .network-section-connection::before {
 	content: "\f233"; /* server */
 }
 
-#connect .network-tab-identity::before {
+#connect .network-section-identity::before {
 	content: "\f007"; /* user */
 }
 
-#connect .network-tab-auth::before {
+#connect .network-section-auth::before {
 	content: "\f084"; /* key */
 }
 
-#connect .network-tab-highlights::before {
+#connect .network-section-highlights::before {
 	content: "\f1fa"; /* at */
 }
 
-/* Line the first field up with the menu's heading, like the Settings pages */
-#connect .container.tabbed {
-	padding-top: 30px;
-}
-
+/* The menu only earns its place beside the form; on narrow screens just scroll */
 @media screen and (max-width: calc(768px + 320px)) {
-	#connect .container.tabbed {
-		padding-top: 0;
+	#connect .network-menu {
+		display: none;
 	}
 }
 
-#network-panel-highlights label {
+#connect .container > section {
+	margin-bottom: 25px;
+}
+
+#section-highlights label {
 	white-space: nowrap;
 }
 
@@ -605,7 +591,16 @@ Global exceptions always apply."
 <script lang="ts">
 import RevealPassword from "./RevealPassword.vue";
 import SidebarToggle from "./SidebarToggle.vue";
-import {computed, defineComponent, nextTick, PropType, ref, watch} from "vue";
+import {
+	computed,
+	defineComponent,
+	nextTick,
+	onBeforeUnmount,
+	onMounted,
+	PropType,
+	ref,
+	watch,
+} from "vue";
 import {useStore} from "../js/store";
 import {ClientNetwork} from "../js/types";
 
@@ -659,20 +654,24 @@ export default defineComponent({
 
 		const publicPassword = ref<HTMLInputElement | null>(null);
 
-		// Editing an existing network splits the form into tabs; connecting
-		// to a new one keeps everything on one page
-		const tabbed = computed(
+		// Editing an existing network gets a menu that jumps between sections
+		const sectioned = computed(
 			() => !!props.defaults?.uuid && !store.state.serverConfiguration?.public
 		);
 
-		const tabs = [
-			{id: "connection", name: "Server"},
-			{id: "identity", name: "Identity"},
-			{id: "auth", name: "Login"},
-			{id: "highlights", name: "Highlights"},
+		const sections = [
+			{id: "connection", name: "Server", connectName: "Network settings"},
+			{id: "identity", name: "Identity", connectName: "User preferences"},
+			{id: "auth", name: "Login", connectName: "Authentication"},
+			{id: "highlights", name: "Highlights", connectName: "Highlights"},
 		];
 
-		const activeTab = ref(tabs[0].id);
+		const heading = (id: string) => {
+			const section = sections.find((s) => s.id === id)!;
+			return sectioned.value ? section.name : section.connectName;
+		};
+
+		const sectionAttrs = (id: string) => ({id: "section-" + id});
 
 		const globalHighlights = computed(() =>
 			String(store.state.settings.highlights || "")
@@ -682,51 +681,72 @@ export default defineComponent({
 				.join(", ")
 		);
 
-		// Inactive tabs are hidden, not removed, so their fields still get submitted
-		const showPanel = (id: string) => !tabbed.value || activeTab.value === id;
+		const windowEl = ref<HTMLElement | null>(null);
+		const activeSection = ref(sections[0].id);
+		let jumpingUntil = 0;
 
-		const panelAttrs = (id: string) =>
-			tabbed.value
-				? {
-						id: "network-panel-" + id,
-						role: "tabpanel",
-						"aria-labelledby": "network-tab-" + id,
-						"data-tab": id,
-					}
-				: {};
+		// Mark the section whose heading was scrolled past last, or the last
+		// one once the page is scrolled to the bottom
+		const updateActiveSection = () => {
+			const root = windowEl.value;
 
-		// The browser can't point at an invalid field on a hidden tab. Take over
-		// reporting: switch to the first invalid field's tab, then report it
-		let pendingInvalid = false;
-		let reportingInvalid = false;
-
-		const onInvalid = (event: Event) => {
-			if (!tabbed.value || reportingInvalid) {
+			if (!root || Date.now() < jumpingUntil) {
 				return;
 			}
 
-			event.preventDefault();
+			const present = sections.filter((s) => document.getElementById("section-" + s.id));
 
-			if (pendingInvalid) {
+			if (present.length === 0) {
 				return;
 			}
 
-			pendingInvalid = true;
-
-			const field = event.target as HTMLInputElement;
-			const panel = field.closest<HTMLElement>("[data-tab]");
-
-			if (panel?.dataset.tab) {
-				activeTab.value = panel.dataset.tab;
+			if (root.scrollTop + root.clientHeight >= root.scrollHeight - 2) {
+				activeSection.value = present[present.length - 1].id;
+				return;
 			}
 
-			void nextTick(() => {
-				pendingInvalid = false;
-				reportingInvalid = true;
-				field.reportValidity();
-				reportingInvalid = false;
+			const rootTop = root.getBoundingClientRect().top;
+			let current = present[0].id;
+
+			for (const s of present) {
+				const top = document.getElementById("section-" + s.id)!.getBoundingClientRect().top;
+
+				if (top - rootTop <= 80) {
+					current = s.id;
+				}
+			}
+
+			activeSection.value = current;
+		};
+
+		const jumpTo = (id: string) => {
+			const root = windowEl.value;
+			const el = document.getElementById("section-" + id);
+
+			if (!root || !el) {
+				return;
+			}
+
+			activeSection.value = id;
+			// Smooth scrolling fires scroll events; don't let them move the mark
+			jumpingUntil = Date.now() + 800;
+			root.scrollTo({
+				top:
+					root.scrollTop +
+					el.getBoundingClientRect().top -
+					root.getBoundingClientRect().top -
+					10,
+				behavior: "smooth",
 			});
 		};
+
+		onMounted(() => {
+			windowEl.value?.addEventListener("scroll", updateActiveSection, {passive: true});
+		});
+
+		onBeforeUnmount(() => {
+			windowEl.value?.removeEventListener("scroll", updateActiveSection);
+		});
 
 		watch(displayPasswordField, (newValue) => {
 			if (newValue) {
@@ -751,12 +771,6 @@ export default defineComponent({
 				commandsInput.value.scrollHeight + 2
 			)}px`;
 		};
-
-		watch(activeTab, () => {
-			void nextTick(() => {
-				resizeCommandsInput();
-			});
-		});
 
 		watch(
 			() => props.defaults?.commands,
@@ -817,13 +831,14 @@ export default defineComponent({
 		return {
 			store,
 			config,
-			tabbed,
-			tabs,
-			activeTab,
+			sectioned,
+			sections,
+			heading,
+			sectionAttrs,
+			windowEl,
+			activeSection,
+			jumpTo,
 			globalHighlights,
-			showPanel,
-			panelAttrs,
-			onInvalid,
 			displayPasswordField,
 			publicPassword,
 			commandsInput,

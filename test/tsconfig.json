@@ -17,7 +17,7 @@
     "composite": false,
     "moduleResolution": "bundler",
     // As in client/tsconfig.json: vuex declares its types outside "exports"
-    "resolvePackageJsonExports": false,
+    "paths": {"vuex": ["../node_modules/vuex/types/index.d.ts"]},
     // Mocha's globals, and what the client code it checks needs
     "types": ["mocha", "node", "webpack-env"],
     "jsx": "preserve" /* Specify what JSX code is generated. */,

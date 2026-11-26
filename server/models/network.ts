@@ -14,6 +14,7 @@ import {MessageType} from "../../shared/types/msg.js";
 import {ChanType} from "../../shared/types/chan.js";
 import {SharedNetwork} from "../../shared/types/network.js";
 import {bouncerNetworkName, trackerNetworkKey} from "../plugins/trackerNetworks.js";
+import {READ_MARKER_CAP} from "../plugins/readMarker.js";
 
 type NetworkIrcOptions = {
 	host: string;
@@ -370,6 +371,7 @@ class Network {
 		const customCaps = [
 			"znc.in/self-message", // Legacy echo-message for ZNC
 			"znc.in/playback", // See http://wiki.znc.in/Playback
+			READ_MARKER_CAP, // Read position shared with the user's other clients
 			"seedpool/enhanced", // THC enhanced client features
 		];
 		this.irc.requestCap(customCaps);

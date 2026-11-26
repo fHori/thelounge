@@ -77,6 +77,13 @@ interface ServerToClientEvents {
 
 	open: (id: number) => void;
 
+	"channel:unread": EventHandler<{
+		chan: number;
+		unread: number;
+		highlight: number;
+		firstUnread: number;
+	}>;
+
 	part: EventHandler<{chan: number}>;
 
 	"sign-out": NoPayloadEventHandler;
@@ -140,6 +147,7 @@ type AuthPerformData =
 			lastMessage: number;
 			openChannel: number | null;
 			hasConfig: boolean;
+			visible?: boolean;
 	  };
 
 interface ClientToServerEvents {
@@ -154,6 +162,9 @@ interface ClientToServerEvents {
 	}>;
 
 	open: (channelId: number) => void;
+
+	// Whether the browser tab is on screen, as opposed to in the background
+	"window:visible": (visible: boolean) => void;
 
 	names: EventHandler<{target: number}>;
 

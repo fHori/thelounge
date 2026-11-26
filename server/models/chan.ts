@@ -12,6 +12,9 @@ import {MessageType, SharedMsg} from "../../shared/types/msg.js";
 import {ChanType, SpecialChanType, ChanState, UserGroup} from "../../shared/types/chan.js";
 import {SharedNetworkChan} from "../../shared/types/network.js";
 import {messageKey} from "../../shared/messageKey.js";
+import {sendReadMarkerIfBeingRead} from "../plugins/readMarker.js";
+
+const UNREAD_LOG_LIMIT = 10000;
 
 export type ChanConfig = {
 	name: string;
@@ -29,8 +32,13 @@ class Chan {
 	key!: string;
 	topic!: string;
 	firstUnread!: number;
+	// Time in milliseconds up to which the IRC server says this buffer
+	// was read (draft/read-marker), 0 when it never said.
+	readMarker!: number;
 	unread!: number;
 	highlight!: number;
+	// The messages counted in `unread`, oldest first. `messages` may not hold them all.
+	unreadLog!: {time: number; highlight: boolean}[];
 	users!: Map<string, User>;
 	muted!: boolean;
 	type!: ChanType;
@@ -57,8 +65,10 @@ class Chan {
 			type: ChanType.CHANNEL,
 			state: ChanState.PARTED,
 			firstUnread: 0,
+			readMarker: 0,
 			unread: 0,
 			highlight: 0,
+			unreadLog: [],
 			users: new Map(),
 			muted: false,
 			pinned: false,
@@ -82,13 +92,21 @@ class Chan {
 			this.unread = 0;
 			this.firstUnread = msg.id;
 			this.highlight = 0;
+		} else if (msg.time.getTime() <= this.readMarker) {
+			// Already read on another client, typically history played back by a bouncer
 		} else if (!isOpen) {
 			if (!this.firstUnread) {
 				this.firstUnread = msg.id;
 			}
 
 			if (increasesUnread || msg.highlight) {
+				this.trimUnreadLog();
 				this.unread++;
+				this.unreadLog.push({time: msg.time.getTime(), highlight: !!msg.highlight});
+
+				if (this.unreadLog.length > UNREAD_LOG_LIMIT) {
+					this.unreadLog.shift();
+				}
 			}
 
 			if (msg.highlight) {
@@ -122,6 +140,15 @@ class Chan {
 			if (Config.values.maxHistory > 0) {
 				this.dereferencePreviews(deleted);
 			}
+		}
+	}
+
+	// `unread` is reset in several places, the newest entries are the ones still unread
+	trimUnreadLog() {
+		const excess = this.unreadLog.length - this.unread;
+
+		if (excess > 0) {
+			this.unreadLog.splice(0, excess);
 		}
 	}
 
@@ -355,6 +382,11 @@ class Chan {
 
 				if (!this.firstUnread) {
 					this.firstUnread = this.messages[this.messages.length - 1].id;
+				}
+
+				if (lazy) {
+					// The buffer was opened before its history was in memory
+					sendReadMarkerIfBeingRead(client, network, this);
 				}
 
 				// Only the newest page goes to the client, it pages back

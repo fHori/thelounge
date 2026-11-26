@@ -18,6 +18,7 @@ export default <IrcEventHandler>function (this: Client, irc, network) {
 		if (data.length === 0) {
 			const msg = new Msg({
 				time: new Date(),
+				localTime: true,
 				type: MessageType.ERROR,
 				text: `${name} is empty`,
 			});

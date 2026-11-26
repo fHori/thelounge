@@ -279,6 +279,7 @@ class MassEventAggregator {
 		const summaryMsg = new Msg({
 			type: MessageType.MASS_EVENT,
 			time: new Date(now),
+			localTime: true,
 			massEventSummary: summary,
 		});
 		this.summaryKeys.set(summaryMsg, captured);

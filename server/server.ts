@@ -36,6 +36,7 @@ import type {
 import {ChanType} from "../shared/types/chan.js";
 import type {SearchResultsChunk} from "../shared/types/storage.js";
 import {isSearchCursor} from "./searchCursor.js";
+import {setBrowserVisible} from "./plugins/readMarker.js";
 import {
 	LockedSharedConfiguration,
 	SharedConfiguration,
@@ -492,12 +493,13 @@ function initializeClient(
 	client: Client,
 	token: string,
 	lastMessage: number,
-	openChannel: number
+	openChannel: number,
+	browserVisible?: boolean
 ) {
 	socket.off("auth:perform", performAuthentication);
 	socket.emit("auth:success");
 
-	client.clientAttach(socket.id, token);
+	client.clientAttach(socket.id, token, browserVisible);
 
 	// Client sends currently active channel on reconnect,
 	// pass it into `open` directly so it is verified and updated if necessary
@@ -691,6 +693,10 @@ function initializeClient(
 
 	socket.on("open", (data) => {
 		client.open(socket.id, data);
+	});
+
+	socket.on("window:visible", (visible) => {
+		setBrowserVisible(client, socket.id, visible === true);
 	});
 
 	socket.on("sort:networks", (data) => {
@@ -1248,7 +1254,12 @@ function performAuthentication(this: Socket, data: AuthPerformData) {
 			throw new Error("finalInit called with undefined client, this is a bug");
 		}
 
-		initializeClient(this, client, token, lastMessage, openChannel);
+		const visible =
+			data && "visible" in data && typeof data.visible === "boolean"
+				? data.visible
+				: undefined;
+
+		initializeClient(this, client, token, lastMessage, openChannel, visible);
 	};
 
 	const initClient = () => {

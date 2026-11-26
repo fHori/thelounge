@@ -33,6 +33,7 @@ import {SharedNetwork} from "../shared/types/network.js";
 import {ServerToClientEvents} from "../shared/types/socket-events.js";
 import MassEventAggregator from "./plugins/massEventAggregator.js";
 import UserIdentLookup from "./plugins/userIdentLookup.js";
+import {sendReadMarker} from "./plugins/readMarker.js";
 
 // At most this often per channel, browsers are told its user list changed
 const USERS_NOTICE_MS = 500;
@@ -51,6 +52,7 @@ const events = [
 	"join",
 	"kick",
 	"list",
+	"markread",
 	"mode",
 	"modelist",
 	"motd",
@@ -102,7 +104,13 @@ class Client {
 	awayMessage!: string;
 	lastActiveChannel!: number;
 	attachedClients!: {
-		[socketId: string]: {token: string; openChannel: number};
+		[socketId: string]: {
+			token: string;
+			openChannel: number;
+			// Whether the browser tab is on screen. Unset until the browser
+			// says so, which older cached clients never do: assume it is.
+			visible?: boolean;
+		};
 	};
 	config!: UserConfig;
 	id: string;
@@ -959,6 +967,10 @@ class Client {
 		// First open of a channel this session reads its stored history
 		targetNetChan.chan.loadMessages(this, targetNetChan.network, true);
 
+		if (attachedClient.visible !== false) {
+			sendReadMarker(targetNetChan.network, targetNetChan.chan);
+		}
+
 		attachedClient.openChannel = targetNetChan.chan.id;
 		this.lastActiveChannel = targetNetChan.chan.id;
 
@@ -1057,7 +1069,7 @@ class Client {
 		}
 	}
 
-	clientAttach(socketId: string, token: string) {
+	clientAttach(socketId: string, token: string, visible?: boolean) {
 		if (this.awayMessage && _.size(this.attachedClients) === 0) {
 			this.networks.forEach((network) => {
 				// Only remove away on client attachment if
@@ -1070,6 +1082,10 @@ class Client {
 
 		const openChannel = this.lastActiveChannel;
 		this.attachedClients[socketId] = {token, openChannel};
+
+		if (typeof visible === "boolean") {
+			this.attachedClients[socketId].visible = visible;
+		}
 	}
 
 	clientDetach(socketId: string) {

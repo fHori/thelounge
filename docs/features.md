@@ -15,6 +15,7 @@ Highlights and additions included in Horizon Lounge.
 - **Shoutbox bridge matchers**: Messages relayed by tracker shoutbox bots are rewritten to show the real sender and link to their tracker profile.
 - **Collapsible netsplits (`massEventDetection`)**: Rapid join/part/quit storms collapse into a single summary line in the UI while preserving full events in storage. Defaults to `10` status messages in `10s`, cooling down after `10s`, and refreshing `NAMES` afterward.
 - **Direct messages sidebar**: Private messages appear in their own sidebar section with channel/DM pinning.
+- **Read marker sync (`draft/read-marker`)**: On servers and bouncers that support it (soju, Ergo), opening a channel marks it read on your other IRC clients, and reading it elsewhere clears the unread badge here. A channel left open in a background tab does not count as read. Needs `server-time`, which those servers offer.
 - **Replies & commands**: Reply directly to messages, and use `/rainbow` and `/cleartopic`.
 
 ## File uploads & security

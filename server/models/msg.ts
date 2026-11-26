@@ -15,6 +15,8 @@ class Msg {
 	type!: MessageType;
 	self!: boolean;
 	time!: Date;
+	// Set when the time is this server's clock, not a `time` tag from the IRC server
+	localTime?: boolean;
 	hostmask!: string;
 	target!: UserInMessage;
 	// TODO: new_nick is only on MessageType.NICK,
@@ -71,6 +73,7 @@ class Msg {
 			this.time = new Date(this.time);
 		} else {
 			this.time = new Date();
+			this.localTime = true;
 		}
 	}
 

@@ -7,7 +7,19 @@ import parseIrcUri from "../helpers/parseIrcUri";
 import {ClientNetwork, ClientChan} from "../types";
 import {SharedNetwork, SharedNetworkChan} from "../../../shared/types/network";
 
+const isWindowVisible = () => document.visibilityState === "visible";
+
+// A channel open in a background tab is not being read,
+// the server needs to know before it tells other IRC clients it was
+document.addEventListener("visibilitychange", () => {
+	if (store.state.isConnected) {
+		socket.emit("window:visible", isWindowVisible());
+	}
+});
+
 socket.on("init", async function (data) {
+	socket.emit("window:visible", isWindowVisible());
+
 	store.commit("networks", mergeNetworkData(data.networks));
 	store.commit("isConnected", true);
 	store.commit("currentUserVisibleError", null);

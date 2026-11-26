@@ -27,3 +27,6 @@ export function migrateRenamedSettings(settings: Record<string, unknown>): boole
 
 	return changed;
 }
+
+// Settings the server sets itself; clients may not change them
+export const serverOwnedSettings: ReadonlySet<string> = new Set(["searchEnabled"]);

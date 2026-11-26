@@ -44,6 +44,7 @@ import {
 	LockedConfigNetDefaults,
 } from "../shared/types/config.js";
 import {userTrackerLimits, userTrackersSetting} from "../shared/trackers.js";
+import {serverOwnedSettings} from "../shared/settings.js";
 
 type ServerOptions = {
 	dev: boolean;
@@ -881,7 +882,8 @@ function initializeClient(
 			if (
 				typeof newSetting.value === "object" ||
 				typeof newSetting.name !== "string" ||
-				newSetting.name[0] === "_"
+				newSetting.name[0] === "_" ||
+				serverOwnedSettings.has(newSetting.name)
 			) {
 				return;
 			}

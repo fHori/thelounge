@@ -161,6 +161,8 @@ const defaultConfig = {
 	},
 	searchEnabled: {
 		default: false,
+		// Set by the server from whether it keeps searchable logs, not a preference
+		sync: "server",
 	},
 	jumpToEnabled: {
 		default: true,

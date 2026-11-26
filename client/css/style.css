@@ -418,6 +418,12 @@ p {
 	/* http://fontawesome.io/icon/plus/ */
 }
 
+.context-menu-reply::before {
+	content: "\f3e5";
+
+	/* https://fontawesome.com/icons/reply?style=solid */
+}
+
 .context-menu-user::before {
 	content: "\f007";
 

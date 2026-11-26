@@ -246,6 +246,12 @@ export default defineComponent({
 			open(data.event, newItems);
 		};
 
+		const openMessageContextMenu = (data: {event: MouseEvent; items: ContextMenuItem[]}) => {
+			if (data.items.length > 0) {
+				open(data.event, data.items);
+			}
+		};
+
 		const navigateMenu = (direction: number) => {
 			let currentIndex = activeItem.value;
 
@@ -278,6 +284,7 @@ export default defineComponent({
 				"contextmenu:inline-channel",
 				<(...evt: unknown[]) => void>openInlineChannelContextMenu
 			);
+			eventbus.on("contextmenu:message", <(...evt: unknown[]) => void>openMessageContextMenu);
 		});
 
 		onUnmounted(() => {
@@ -291,6 +298,10 @@ export default defineComponent({
 			eventbus.off(
 				"contextmenu:inline-channel",
 				<(...evt: unknown[]) => void>openInlineChannelContextMenu
+			);
+			eventbus.off(
+				"contextmenu:message",
+				<(...evt: unknown[]) => void>openMessageContextMenu
 			);
 
 			close();

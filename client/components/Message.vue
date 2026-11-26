@@ -19,6 +19,7 @@
 				: prettyMessage.from.nick)
 		"
 		:data-bridged="prettyMessage.from?.shoutbox"
+		v-on="canReply ? longPress : {}"
 	>
 		<span
 			aria-hidden="true"
@@ -185,6 +186,12 @@ import {useStore} from "../js/store";
 import {MessageType} from "../../shared/types/msg";
 import {parser as shoutboxParser} from "../js/helpers/shoutbox-bridge/parser";
 import {ChanType} from "../../shared/types/chan";
+import {
+	canReplyToMessage,
+	generateMessageContextMenu,
+	replyToMessage as replyToMessageHelper,
+} from "../js/helpers/messageReply";
+import useLongPress from "../js/hooks/use-long-press";
 
 MessageTypes.ParsedMessage = ParsedMessage;
 MessageTypes.LinkPreview = LinkPreview;
@@ -253,13 +260,9 @@ export default defineComponent({
 			return shoutboxParser(props.message, props.network, props.channel);
 		});
 
-		const canReply = computed(() => {
-			if (store.state.settings.enableReplyToMessage === false) {
-				return false;
-			}
-
-			return Boolean(prettyMessage.value.from?.nick && props.message.text);
-		});
+		const canReply = computed(() =>
+			canReplyToMessage(store.state.settings, prettyMessage.value, props.message)
+		);
 
 		const messageActions = computed(() => {
 			return (
@@ -275,19 +278,19 @@ export default defineComponent({
 		});
 
 		const replyToMessage = () => {
-			const nick = prettyMessage.value.from?.nick;
-			const content = prettyMessage.value.text;
-
-			if (!nick || !content) {
-				return;
-			}
-
-			const replyText = store.state.settings.replyToMessagePlainText
-				? `${nick}: (re: "${content}") `
-				: `\x02${nick}\x02: \x0314,99"\x1D${content}\x1D"\x03 `;
-
-			eventbus.emit("message:reply", replyText);
+			replyToMessageHelper(store.state.settings, prettyMessage.value);
 		};
+
+		const longPress = useLongPress((event) => {
+			eventbus.emit("contextmenu:message", {
+				event,
+				items: generateMessageContextMenu(
+					store.state.settings,
+					prettyMessage.value,
+					props.message
+				),
+			});
+		});
 
 		return {
 			timeFormat,
@@ -299,6 +302,7 @@ export default defineComponent({
 			canReply,
 			messageActions,
 			replyToMessage,
+			longPress,
 		};
 	},
 });

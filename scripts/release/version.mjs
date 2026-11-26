@@ -253,6 +253,8 @@ export function describe(version, existing) {
 //   release:    a stable release      -> X.Y.Z, sha-<short>; X.Y when it is the
 //               newest of its line, latest when it is the newest release
 //   prerelease: a release candidate   -> X.Y.Z-rc.N, next, sha-<short>
+//   preview:    a preview/<name> push -> preview-<name>, preview-<name>-<short>
+//               (its own sha tag: sha-<short> is for commits on master)
 // Weekly base-image refreshes are ordinary releases (a new version), so the
 // exact tags X.Y.Z are never re-pushed once published.
 // No year-only tag: "2026" would mix feature releases, so it pins nothing useful.
@@ -263,6 +265,7 @@ export function imageTags({
 	latest = false,
 	lineLatest = false,
 	edge = false,
+	branch = "",
 }) {
 	const short = sha.slice(0, 7);
 
@@ -306,9 +309,38 @@ export function imageTags({
 			need(isForkVersion(version) && !isStable(version), "a fork pre-release version");
 			need(short, "a commit sha");
 			return [version, "next", `sha-${short}`, ...(edge ? ["edge"] : [])];
+
+		case "preview": {
+			const name = previewName(branch);
+			need(name, "a preview/<name> branch");
+			need(short, "a commit sha");
+			return [`preview-${name}`, `preview-${name}-${short}`];
+		}
+
 		default:
 			throw new Error(`unknown channel "${channel}"`);
 	}
+}
+
+// The <name> of a preview/<name> branch as it can go into an image tag
+// (lowercase letters, digits, ".", "-"), or "" for any other branch.
+// preview/Search_Speed/v2 -> search-speed-v2
+export function previewName(branch) {
+	const match = /^preview\/(.+)$/.exec(branch);
+
+	if (!match) {
+		return "";
+	}
+
+	const name = match[1]
+		.toLowerCase()
+		.replace(/[^a-z0-9.]+/g, "-")
+		.replace(/^[-.]+|[-.]+$/g, "")
+		// A tag is at most 128 characters: room for "preview-" and "-<short sha>"
+		.slice(0, 100)
+		.replace(/[-.]+$/, "");
+
+	return name;
 }
 
 // ---- command line ----------------------------------------------------------
@@ -417,7 +449,8 @@ async function main(argv) {
 			return emit(describe(a.version, forkVersions(tags ?? gitTags())));
 		}
 
-		// Image tags: --channel C [--version X] [--sha S] [--latest] [--line-latest] [--edge] [--image I]
+		// Image tags: --channel C [--version X] [--sha S] [--latest] [--line-latest] [--edge]
+		//   [--branch preview/<name>] [--image I]
 		case "image-tags": {
 			const list = imageTags({
 				channel: a.channel,
@@ -426,6 +459,7 @@ async function main(argv) {
 				latest: bool(a.latest),
 				lineLatest: bool(a["line-latest"]),
 				edge: bool(a.edge),
+				branch: a.branch || "",
 			});
 			const image = a.image || SCHEME.image;
 			return emit({tags: list.map((t) => `${image}:${t}`)});

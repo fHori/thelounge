@@ -4,6 +4,8 @@ Releases are automated by `.github/workflows/cut-release.yml` on `master`. The w
 
 Keep `master` releasable — every merge to `master` also updates the `:edge` tag.
 
+To let people try a change before it's merged, push a `preview/<name>` branch (from `master`) and merge the change into it: each push publishes `:preview-<name>`. Releases never include it.
+
 ## Versioning
 
 Versions follow `YEAR.FEATURE.PATCH` (tagged `vYEAR.FEATURE.PATCH`):
@@ -15,14 +17,16 @@ Versions follow `YEAR.FEATURE.PATCH` (tagged `vYEAR.FEATURE.PATCH`):
 
 ## Image tags (`ghcr.io/fhori/thelounge`)
 
-| Tag           | Meaning                           | Updates                           |
-| ------------- | --------------------------------- | --------------------------------- |
-| `latest`      | Latest stable release             | Moves on each stable release      |
-| `2026.11`     | Latest patch on that feature line | Moves within that feature release |
-| `2026.11.0`   | Exact pinned release              | Immutable                         |
-| `next`        | Latest release candidate          | Moves on pre-releases             |
-| `edge`        | Latest commit on `master`         | Moves on every merge to `master`  |
-| `sha-abc1234` | Specific commit build             | Immutable                         |
+| Tag                      | Meaning                           | Updates                             |
+| ------------------------ | --------------------------------- | ----------------------------------- |
+| `latest`                 | Latest stable release             | Moves on each stable release        |
+| `2026.11`                | Latest patch on that feature line | Moves within that feature release   |
+| `2026.11.0`              | Exact pinned release              | Immutable                           |
+| `next`                   | Latest release candidate          | Moves on pre-releases               |
+| `edge`                   | Latest commit on `master`         | Moves on every merge to `master`    |
+| `sha-abc1234`            | Specific commit build             | Immutable                           |
+| `preview-<name>`         | Latest commit on `preview/<name>` | Moves on every merge to that branch |
+| `preview-<name>-abc1234` | Specific preview build            | Immutable                           |
 
 ## Cutting a release
 

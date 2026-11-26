@@ -32,12 +32,13 @@ docker compose exec thelounge thelounge add <name>
 
 Versions follow `year.feature.fix`: for example, `2026.12.1` is the 12th feature release of 2026 with one fix on top.
 
-| Tag         | When to use it                                                            |
-| ----------- | ------------------------------------------------------------------------- |
-| `latest`    | Follow every release                                                      |
-| `2026.12`   | Receive fixes and security rebuilds for that release without new features |
-| `2026.12.1` | Pin an exact release and upgrade on your own schedule                     |
-| `edge`      | Track the newest unreleased changes from `master`                         |
+| Tag              | When to use it                                                            |
+| ---------------- | ------------------------------------------------------------------------- |
+| `latest`         | Follow every release                                                      |
+| `2026.12`        | Receive fixes and security rebuilds for that release without new features |
+| `2026.12.1`      | Pin an exact release and upgrade on your own schedule                     |
+| `edge`           | Track the newest unreleased changes from `master`                         |
+| `preview-<name>` | Try a change before it's merged, when asked to                            |
 
 For non-root hardened containers, Unraid permissions, `THELOUNGE_HOME=/config`, and CLI commands, see [Docker](/DOCKER).
 

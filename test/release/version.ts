@@ -121,6 +121,26 @@ describe("release version scheme", function () {
 		).to.include("edge");
 		expect(() => V.imageTags({channel: "release", version: "2026.12.0-rc.1", sha})).to.throw();
 	});
+
+	it("tags preview builds after their branch, apart from master's", function () {
+		const sha = "0123456789abcdef";
+		expect(V.imageTags({channel: "preview", branch: "preview/diagnostics", sha})).to.deep.equal(
+			["preview-diagnostics", "preview-diagnostics-0123456"]
+		);
+		expect(() => V.imageTags({channel: "preview", branch: "feat/diagnostics", sha})).to.throw();
+		expect(() => V.imageTags({channel: "preview", branch: "preview/x"})).to.throw();
+	});
+
+	it("turns preview branch names into tag names", function () {
+		expect(V.previewName("preview/diagnostics")).to.equal("diagnostics");
+		expect(V.previewName("preview/Search_Speed/v2")).to.equal("search-speed-v2");
+		expect(V.previewName("preview/--odd..name--")).to.equal("odd..name");
+		expect(V.previewName("preview/" + "a".repeat(200))).to.have.lengthOf(100);
+		expect(V.previewName("preview/")).to.equal("");
+		expect(V.previewName("preview/___")).to.equal("");
+		expect(V.previewName("master")).to.equal("");
+		expect(V.previewName("feat/preview/x")).to.equal("");
+	});
 });
 
 describe("release notes", function () {

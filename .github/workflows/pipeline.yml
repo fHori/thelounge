@@ -22,9 +22,13 @@ on:
         type: boolean
         default: false
       channel:
-        description: "Image tag set, see scripts/release/version.mjs: none, edge, release, prerelease"
+        description: "Image tag set, see scripts/release/version.mjs: none, edge, release, prerelease, preview"
         type: string
         default: none
+      branch:
+        description: The preview/<name> branch a preview build comes from, which names its tags
+        type: string
+        default: ""
       version:
         description: Release version baked into the image (empty for edge and pull requests)
         type: string
@@ -201,7 +205,7 @@ jobs:
         with:
           images: ${{ env.IMAGE }}
           labels: |
-            org.opencontainers.image.version=${{ inputs.version || 'edge' }}
+            org.opencontainers.image.version=${{ inputs.version || (inputs.channel == 'preview' && 'preview' || 'edge') }}
             org.opencontainers.image.revision=${{ env.GIT_COMMIT }}
             org.opencontainers.image.licenses=MIT
             org.opencontainers.image.base.name=${{ env.BASE_IMAGE }}
@@ -294,10 +298,11 @@ jobs:
           LINE_LATEST: ${{ inputs.line_latest }}
           EDGE: ${{ inputs.edge }}
           COMMIT: ${{ inputs.commit }}
+          BRANCH: ${{ inputs.branch }}
         run: |
           node scripts/release/version.mjs image-tags --image "ghcr.io/${GITHUB_REPOSITORY,,}" \
             --channel "$CHANNEL" --version "$VERSION" --sha "${COMMIT:-$(git -C built rev-parse HEAD)}" \
-            --latest "$LATEST" --line-latest "$LINE_LATEST" --edge "$EDGE"
+            --latest "$LATEST" --line-latest "$LINE_LATEST" --edge "$EDGE" --branch "$BRANCH"
 
       - name: Download digests
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2

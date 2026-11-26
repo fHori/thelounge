@@ -4,7 +4,8 @@ permissions:
   contents: read
 
 # Releases (versioned image tags and :latest) are cut by cut-release.yml; this
-# workflow checks pull requests and publishes master as :edge.
+# workflow checks pull requests, publishes master as :edge and each
+# preview/<name> branch as :preview-<name>, a build to try out before merging.
 #
 # It always runs and always reports the "CI" check, which master's ruleset
 # requires. Changes to documentation alone skip the tests and images: Markdown
@@ -12,7 +13,7 @@ permissions:
 # still checked.
 on:
   push:
-    branches: [master]
+    branches: [master, "preview/**"]
   pull_request:
 
 # A new push to a pull request cancels its older, still running checks
@@ -54,7 +55,8 @@ jobs:
 
   # Tests and per-architecture image builds run in parallel, as before.
   # Pull requests stop at checking that the image builds; master pushes
-  # publish :edge and :sha-<short>.
+  # publish :edge and :sha-<short>, preview/<name> pushes :preview-<name>
+  # and :preview-<name>-<short>.
   #
   # Not for the release commit the Release workflow pushes to master: it
   # builds and publishes that commit's images itself, :edge included.
@@ -74,7 +76,11 @@ jobs:
     with:
       ref: ${{ github.sha }}
       push: ${{ github.event_name == 'push' }}
-      channel: ${{ github.event_name == 'push' && 'edge' || 'none' }}
+      channel: >-
+        ${{ github.event_name != 'push' && 'none'
+        || startsWith(github.ref, 'refs/heads/preview/') && 'preview'
+        || 'edge' }}
+      branch: ${{ github.event_name == 'push' && github.ref_name || '' }}
 
   # The test job's lint runs Prettier on Markdown too; this covers changes to
   # documentation alone, with the Prettier version from yarn.lock and nothing

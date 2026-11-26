@@ -12,12 +12,13 @@ release of 2026 with one fix on top. The middle number goes up when a release
 adds features or changes how messages are stored; the last one goes up for
 fixes, dependency updates and base-image security rebuilds.
 
-| Tag         | Use it to                                                        |
-| ----------- | ---------------------------------------------------------------- |
-| `latest`    | Follow every release                                             |
-| `2026.12`   | Get fixes and security rebuilds of that release, no new features |
-| `2026.12.1` | Stay on exactly that release until you change it                 |
-| `edge`      | Run the newest unreleased changes from `master`                  |
+| Tag              | Use it to                                                        |
+| ---------------- | ---------------------------------------------------------------- |
+| `latest`         | Follow every release                                             |
+| `2026.12`        | Get fixes and security rebuilds of that release, no new features |
+| `2026.12.1`      | Stay on exactly that release until you change it                 |
+| `edge`           | Run the newest unreleased changes from `master`                  |
+| `preview-<name>` | Try a change before it's merged, when asked to                   |
 
 Back up your data before moving to a new feature release: the release notes
 say when it changes message storage. More in [RELEASING.md](RELEASING.md).

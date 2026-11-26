@@ -1,3 +1,6 @@
+// Stylesheets imported for their side effect; webpack bundles them
+declare module "*.css";
+
 // https://vuejs.github.io/vetur/guide/setup.html#vue3
 declare module "*.vue" {
 	import type {DefineComponent} from "vue";

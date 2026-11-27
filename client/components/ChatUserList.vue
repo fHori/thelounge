@@ -24,73 +24,41 @@
 				@keydown.enter="selectUser"
 			/>
 		</div>
-		<div class="names">
-			<!-- Custom groups from SPGROUPS -->
-			<template v-if="hasCustomGroups">
+		<div ref="names" class="names" @scroll.passive="scheduleMeasure">
+			<!-- Only the rows in view are drawn, spacers stand in for the others:
+			     drawing every user of a channel with thousands took long enough
+			     to freeze switching to it -->
+			<div v-for="(group, index) in shownGroups" :key="group.key" :class="group.classes">
 				<div
-					v-for="(users, group) in groupedUsers"
-					:key="'group-' + group"
-					:class="['user-mode', 'custom-group', 'group-' + getGroupSlug(group)]"
+					v-if="group.header !== null && group.count > 0"
+					:class="['custom-group-header', 'group-header-' + getGroupSlug(group.header)]"
 				>
-					<div
-						v-if="users.length > 0"
-						:class="['custom-group-header', 'group-header-' + getGroupSlug(group)]"
-					>
-						{{ group }}
-					</div>
-					<template v-if="userSearchInput.length > 0">
-						<!-- eslint-disable vue/no-v-text-v-html-on-component -->
-						<Username
-							v-for="user in users"
-							:key="user.original!.nick + '-search'"
-							:on-hover="hoverUser"
-							:active="user.original === activeUser"
-							:user="user.original!"
-							v-html="user.string"
-						/>
-						<!-- eslint-enable -->
-					</template>
-					<template v-else>
-						<Username
-							v-for="user in users"
-							:key="user.nick"
-							:on-hover="hoverUser"
-							:active="user === activeUser"
-							:user="user"
-						/>
-					</template>
+					{{ group.header }}
 				</div>
-			</template>
-			<!-- Default IRC modes fallback -->
-			<template v-else>
-				<div
-					v-for="(users, mode) in groupedUsers"
-					:key="mode"
-					:class="['user-mode', getModeClass(String(mode))]"
-				>
-					<template v-if="userSearchInput.length > 0">
-						<!-- eslint-disable vue/no-v-text-v-html-on-component -->
-						<Username
-							v-for="user in users"
-							:key="user.original.nick + '-search'"
-							:on-hover="hoverUser"
-							:active="user.original === activeUser"
-							:user="user.original"
-							v-html="user.string"
-						/>
-						<!-- eslint-enable -->
-					</template>
-					<template v-else>
-						<Username
-							v-for="user in users"
-							:key="user.nick"
-							:on-hover="hoverUser"
-							:active="user === activeUser"
-							:user="user"
-						/>
-					</template>
-				</div>
-			</template>
+				<div :data-rows-of="index" :style="{height: group.before + 'px'}" />
+				<template v-if="userSearchInput.length > 0">
+					<!-- eslint-disable vue/no-v-text-v-html-on-component -->
+					<Username
+						v-for="user in group.users"
+						:key="user.original.nick + '-search'"
+						:on-hover="hoverUser"
+						:active="user.original === activeUser"
+						:user="user.original"
+						v-html="user.string"
+					/>
+					<!-- eslint-enable -->
+				</template>
+				<template v-else>
+					<Username
+						v-for="user in group.users"
+						:key="user.nick"
+						:on-hover="hoverUser"
+						:active="user === activeUser"
+						:user="user"
+					/>
+				</template>
+				<div :style="{height: group.after + 'px'}" />
+			</div>
 		</div>
 	</aside>
 </template>
@@ -130,12 +98,23 @@
 
 <script lang="ts">
 import {filter as fuzzyFilter} from "fuzzy";
-import {computed, defineComponent, nextTick, PropType, ref} from "vue";
+import {
+	computed,
+	defineComponent,
+	nextTick,
+	onMounted,
+	onUnmounted,
+	PropType,
+	ref,
+	shallowRef,
+	watch,
+} from "vue";
 import type {UserInMessage} from "../../shared/types/msg";
 import type {ClientChan, ClientUser} from "../js/types";
 import Username from "./Username.vue";
 import groupSlug from "../js/helpers/groupSlug";
 import {useStore} from "../js/store";
+import {OVERSCAN_ROWS, RowRange, rowsInView, rowsToDraw} from "../js/helpers/userListWindow";
 
 const modes = {
 	"~": "owner",
@@ -160,6 +139,7 @@ export default defineComponent({
 		const userSearchInput = ref("");
 		const activeUser = ref<UserInMessage | null>();
 		const userlist = ref<HTMLDivElement>();
+		const names = ref<HTMLDivElement>();
 
 		// Check if we have custom groups from SPGROUPS
 		const hasCustomGroups = computed(() => {
@@ -270,6 +250,121 @@ export default defineComponent({
 			return hasCustomGroups.value ? customGroupedUsers.value : standardGroupedUsers.value;
 		});
 
+		// Height of one row, measured once a row is drawn. Until then a guess:
+		// 14px text with a line height of 1.6.
+		const rowHeight = ref(22.4);
+		// Rows drawn of each group, by group key
+		const drawn = shallowRef<Record<string, RowRange>>({});
+
+		const groupEntries = computed(() =>
+			Object.entries(groupedUsers.value as Record<string, unknown[]>)
+		);
+
+		const shownGroups = computed(() =>
+			groupEntries.value.map(([name, users]) => {
+				const key = hasCustomGroups.value ? "group-" + name : name;
+				const count = users.length;
+				// Before the first measurement, enough rows to fill the view
+				const [start, end] = drawn.value[key] ?? [0, OVERSCAN_ROWS * 2];
+				const first = Math.min(start, count);
+				const last = Math.min(end, count);
+
+				return {
+					key,
+					classes: hasCustomGroups.value
+						? ["user-mode", "custom-group", "group-" + getGroupSlug(name)]
+						: ["user-mode", modes[name] as string],
+					header: hasCustomGroups.value ? name : null,
+					count,
+					// eslint-disable-next-line @typescript-eslint/no-explicit-any
+					users: users.slice(first, last) as any[],
+					before: first * rowHeight.value,
+					after: (count - last) * rowHeight.value,
+				};
+			})
+		);
+
+		// Works out which rows are in view and draws those
+		const measure = () => {
+			const el = names.value;
+
+			if (!el) {
+				return;
+			}
+
+			const row = el.querySelector(".user");
+
+			if (row) {
+				const height = row.getBoundingClientRect().height;
+
+				if (height > 0 && Math.abs(height - rowHeight.value) > 0.01) {
+					rowHeight.value = height;
+					// Spacers change with it, measure again once they did
+					void nextTick(measure);
+				}
+			}
+
+			const viewTop = el.getBoundingClientRect().top;
+			const viewBottom = viewTop + el.clientHeight;
+			const next: Record<string, RowRange> = {};
+			let changed = false;
+
+			shownGroups.value.forEach((group, index) => {
+				const spacer = el.querySelector(`[data-rows-of="${index}"]`);
+				const current = drawn.value[group.key];
+				const inView = spacer
+					? rowsInView(
+							group.count,
+							spacer.getBoundingClientRect().top,
+							viewTop,
+							viewBottom,
+							rowHeight.value
+						)
+					: ([0, 0] as const);
+				const range = rowsToDraw(group.count, inView, current);
+				next[group.key] = range;
+
+				if (!current || current[0] !== range[0] || current[1] !== range[1]) {
+					changed = true;
+				}
+			});
+
+			if (changed || Object.keys(next).length !== Object.keys(drawn.value).length) {
+				drawn.value = next;
+			}
+		};
+
+		let measureFrame = 0;
+
+		const scheduleMeasure = () => {
+			if (!measureFrame) {
+				measureFrame = requestAnimationFrame(() => {
+					measureFrame = 0;
+					measure();
+				});
+			}
+		};
+
+		// Other users, a search, or another channel: once drawn, see what's in view
+		watch(groupedUsers, () => void nextTick(measure));
+
+		// Opening the list (it's hidden, not removed, while closed) and resizing
+		let resizeObserver: ResizeObserver | undefined;
+
+		onMounted(() => {
+			if (typeof ResizeObserver !== "undefined" && names.value) {
+				resizeObserver = new ResizeObserver(scheduleMeasure);
+				resizeObserver.observe(names.value);
+			}
+
+			measure();
+		});
+
+		onUnmounted(() => {
+			resizeObserver?.disconnect();
+			cancelAnimationFrame(measureFrame);
+		});
+
 		const setUserSearchInput = (e: Event) => {
 			userSearchInput.value = (e.target as HTMLInputElement).value;
 		};
@@ -310,11 +405,46 @@ export default defineComponent({
 			activeUser.value = null;
 		};
 
+		// The active user's row may not be drawn: scroll to where it is in the list
 		const scrollToActiveUser = () => {
-			// Scroll the list if needed after the active class is applied
 			void nextTick(() => {
-				const el = userlist.value?.querySelector(".active");
-				el?.scrollIntoView({block: "nearest", inline: "nearest"});
+				const el = names.value;
+				const user = activeUser.value;
+
+				if (!el || !user) {
+					return;
+				}
+
+				const index = groupEntries.value.findIndex(([, users]) =>
+					users.some((u) => u === user || (u as {original?: unknown}).original === user)
+				);
+
+				if (index < 0) {
+					return;
+				}
+
+				const row = groupEntries.value[index][1].findIndex(
+					(u) => u === user || (u as {original?: unknown}).original === user
+				);
+				const spacer = el.querySelector(`[data-rows-of="${index}"]`);
+
+				if (!spacer) {
+					return;
+				}
+
+				const top =
+					spacer.getBoundingClientRect().top -
+					el.getBoundingClientRect().top +
+					el.scrollTop +
+					row * rowHeight.value;
+
+				if (top < el.scrollTop) {
+					el.scrollTop = top;
+				} else if (top + rowHeight.value > el.scrollTop + el.clientHeight) {
+					el.scrollTop = top + rowHeight.value - el.clientHeight;
+				}
+
+				measure();
 			});
 		};
 
@@ -373,11 +503,12 @@ export default defineComponent({
 
 		return {
 			filteredUsers,
-			groupedUsers,
-			hasCustomGroups,
+			shownGroups,
+			scheduleMeasure,
 			userSearchInput,
 			activeUser,
 			userlist,
+			names,
 			getGroupSlug,
 			setUserSearchInput,
 			getModeClass,

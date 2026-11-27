@@ -5,7 +5,11 @@ import {Command} from "commander";
 import ClientManager from "../clientManager.js";
 import Config from "../config.js";
 import Utils from "./utils.js";
-import SqliteMessageStorage from "../plugins/messageStorage/sqlite.js";
+import SqliteMessageStorage, {
+	currentSchemaVersion,
+	migrations,
+	namedSchemaVersions,
+} from "../plugins/messageStorage/sqlite.js";
 import {StorageCleaner} from "../storageCleaner.js";
 
 const program = new Command("storage").description(
@@ -35,6 +39,107 @@ program
 			process.exit(1);
 		});
 	});
+
+program
+	.command("downgrade")
+	.argument(
+		"<version>",
+		`schema version to go back to, or a name: "stock" (${namedSchemaVersions.stock}, stock The Lounge 4.5.x and the official Docker image), "stock-4.6" (${namedSchemaVersions["stock-4.6"]}, stock The Lounge 4.6.x) or "tetra" (${namedSchemaVersions.tetra}, stock 4.4.x and tetrahydroc/thelounge)`
+	)
+	.argument("[username]", "downgrade a specific user only, all if not provided")
+	.description(
+		"Undo message storage migrations so an older build can open the database again. Stop The Lounge first."
+	)
+	.on("--help", () => {
+		log.raw("");
+		log.raw("Schema versions this build knows about (newest last):");
+
+		for (const m of migrations) {
+			const notes = [
+				m.version === namedSchemaVersions.stock ? "stock: The Lounge 4.5.x" : "",
+				m.version === namedSchemaVersions["stock-4.6"] ? "stock-4.6: The Lounge 4.6.x" : "",
+				m.version === namedSchemaVersions.tetra
+					? "tetra: The Lounge 4.4.x, tetrahydroc"
+					: "",
+				m.version === currentSchemaVersion ? "current" : "",
+			].filter(Boolean);
+
+			log.raw(`  ${m.version}${notes.length ? ` (${notes.join(", ")})` : ""}`);
+		}
+
+		Utils.extraHelp();
+	})
+	.action(function (version: string, user?: string) {
+		runDowngrades(version, user).catch((err) => {
+			log.error(err.toString());
+			process.exit(1);
+		});
+	});
+
+async function runDowngrades(versionArg: string, user?: string) {
+	const version = Object.hasOwn(namedSchemaVersions, versionArg)
+		? namedSchemaVersions[versionArg as keyof typeof namedSchemaVersions]
+		: Number(versionArg);
+
+	if (!migrations.some((m) => m.version === version)) {
+		throw new Error(
+			`unknown schema version "${versionArg}", see \`thelounge storage downgrade --help\``
+		);
+	}
+
+	const manager = new ClientManager();
+	const users = manager.getUsers();
+
+	if (user && !users.includes(user)) {
+		throw new Error(`invalid user ${user}`);
+	}
+
+	log.warn("Make sure The Lounge is stopped, and that you have a backup of the logs folder.");
+
+	for (const name of user ? [user] : users) {
+		await downgradeUser(manager, name, version);
+	}
+
+	log.info(
+		`Done. Starting this build again will migrate the databases forward to ${currentSchemaVersion}.`
+	);
+}
+
+async function downgradeUser(manager: ClientManager, user: string, version: number) {
+	log.info("handling user", user);
+
+	// Don't create a database just to downgrade it
+	if (!fs.existsSync(path.join(Config.getUserLogsPath(), `${user}.sqlite3`))) {
+		log.info("no message database for", user, ". Skipping");
+		return;
+	}
+
+	if (!isUserLogEnabled(manager, user)) {
+		log.info("logging disabled for user", user, ". Skipping");
+		return;
+	}
+
+	// Opened as is: migrating it forward first would only be undone again, and
+	// on a large history that means rebuilding the search index for nothing
+	const sqlite = new SqliteMessageStorage(user);
+	await sqlite.open_without_migrating();
+
+	try {
+		const from = await sqlite.current_version();
+
+		if (from === version) {
+			log.info(user, "is already at", String(version));
+			return;
+		}
+
+		await sqlite.downgrade_to(version);
+		log.info("reclaiming space, this might take a while");
+		await sqlite.vacuum();
+		log.info(`downgraded ${user} from ${from} to ${version}`);
+	} finally {
+		await sqlite.close();
+	}
+}
 
 program
 	.command("vacuum")

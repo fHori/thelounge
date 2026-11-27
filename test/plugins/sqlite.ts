@@ -12,6 +12,7 @@ import MessageStorage, {
 	necessaryMigrations,
 	rollbacks,
 	searchLimits,
+	namedSchemaVersions,
 	trigramQuery,
 } from "../../server/plugins/messageStorage/sqlite.js";
 import Database from "better-sqlite3";
@@ -248,6 +249,198 @@ describe("SQLite unit tests", function () {
 		expect(deleted).to.equal(2, "number of deleted messages doesn't match");
 		messages = await store.getMessages(net, chan, () => id++);
 		expect(messages.map((m) => m.type)).to.have.ordered.members([MessageType.AWAY]);
+	});
+});
+
+describe("SQLite downgrades", function () {
+	let store: MessageStorage;
+
+	// Every table and index, without the ones SQLite manages itself
+	const schemaObjects = () =>
+		(
+			store.database
+				.prepare(
+					"SELECT type || ' ' || name AS o FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY name"
+				)
+				.pluck()
+				.all() as string[]
+		).sort();
+
+	beforeEach(async function () {
+		store = new MessageStorage("testUser");
+		await store._enable(":memory:");
+		store.initDone.resolve();
+	});
+
+	afterEach(async function () {
+		await store.close();
+	});
+
+	it("should store rollback steps in order", function () {
+		const steps = store.database
+			.prepare(
+				"SELECT step FROM rollback_steps JOIN migrations ON migrations.id = rollback_steps.migration_id WHERE version = ? ORDER BY rollback_steps.id"
+			)
+			.pluck()
+			.all(currentSchemaVersion);
+
+		expect(steps).to.deep.equal(
+			rollbacks.find((r) => r.version === currentSchemaVersion)!.stmts.map((_, i) => i)
+		);
+	});
+
+	// What each build creates for a new database, besides the four tables
+	const plainColumns = ["id", "network", "channel", "time", "type", "msg"];
+	const targets = [
+		{
+			name: "stock",
+			version: namedSchemaVersions.stock,
+			indexes: ["msg_type_idx", "network_channel_time", "time"],
+			columns: plainColumns,
+		},
+		{
+			name: "stock-4.6",
+			version: namedSchemaVersions["stock-4.6"],
+			indexes: ["msg_type_idx", "msgid_idx", "network_channel_time", "time"],
+			columns: [...plainColumns, "msgid"],
+		},
+		{
+			name: "tetra",
+			version: namedSchemaVersions.tetra,
+			indexes: ["msg_type_idx", "network_channel", "time"],
+			columns: plainColumns,
+		},
+	];
+
+	const expectSchemaOf = async (target: (typeof targets)[number]) => {
+		expect(schemaObjects()).to.deep.equal(
+			[
+				...target.indexes.map((i) => `index ${i}`),
+				"table messages",
+				"table migrations",
+				"table options",
+				"table rollback_steps",
+			].sort()
+		);
+		expect(
+			(store.database.prepare("PRAGMA table_info(messages)").all() as {name: string}[]).map(
+				(c) => c.name
+			)
+		).to.deep.equal(target.columns);
+
+		// The version an older build checks before it opens the database
+		expect(await store.current_version()).to.equal(target.version);
+
+		// Nothing left over that a later upgrade could trip over
+		expect(
+			store.database.prepare("SELECT max(version) FROM migrations").pluck().get()
+		).to.equal(target.version);
+		expect(
+			store.database
+				.prepare(
+					"SELECT count(*) FROM rollback_steps WHERE migration_id NOT IN (SELECT id FROM migrations)"
+				)
+				.pluck()
+				.get()
+		).to.equal(0);
+	};
+
+	for (const target of targets) {
+		it(`should leave exactly the ${target.name} schema behind`, async function () {
+			expect(await store.downgrade_to(target.version)).to.equal(target.version);
+			await expectSchemaOf(target);
+		});
+
+		it(`should downgrade a database upgraded before stock 4.5's migration to ${target.name}`, async function () {
+			// What this fork stored before it took over 1780272000000: no row
+			// for it, and the old rollback of its own index migration
+			const own = store.database
+				.prepare("SELECT id FROM migrations WHERE version = 1794816000000")
+				.pluck()
+				.get();
+			store.database.exec(
+				"DELETE FROM rollback_steps WHERE migration_id IN (SELECT id FROM migrations WHERE version = 1780272000000)"
+			);
+			store.database.exec("DELETE FROM migrations WHERE version = 1780272000000");
+			store.database
+				.prepare(
+					"INSERT INTO rollback_steps (migration_id, step, statement) VALUES (?, 0, 'CREATE INDEX network_channel ON messages (network, channel)'), (?, 1, 'DROP INDEX network_channel_time')"
+				)
+				.run(own, own);
+
+			await store.downgrade_to(target.version);
+			await expectSchemaOf(target);
+		});
+	}
+
+	it("should migrate forward again after a downgrade", async function () {
+		const upToDate = schemaObjects();
+
+		for (const target of targets) {
+			await store.downgrade_to(target.version);
+			await store.run_migrations();
+
+			expect(await store.current_version()).to.equal(currentSchemaVersion);
+			expect(schemaObjects()).to.deep.equal(upToDate);
+		}
+	});
+
+	it("should stop a background index build and keep search working", async function () {
+		await store.index(
+			{uuid: "net"} as Network,
+			{name: "#chan"} as Channel,
+			new Msg({type: MessageType.MESSAGE, time: new Date(1700000000000), text: "kept line"})
+		);
+
+		// Leave the index to be built in the background, then go back down,
+		// with that message still waiting in the write batch. Stock 4.6 keeps
+		// the msgid column, which search on an open store reads.
+		const target = namedSchemaVersions["stock-4.6"];
+		await store.downgrade_to(target);
+		await store.run_migrations();
+		expect(store.searchIndexReady).to.equal(false);
+		await store.downgrade_to(target);
+
+		expect(store.searchIndexReady).to.equal(false);
+		const found = await store.search({
+			searchTerm: "kept",
+			networkUuid: "net",
+			channelName: "#chan",
+			offset: 0,
+		});
+		expect(found.results.map((m) => m.text)).to.deep.equal(["kept line"]);
+
+		// Nothing left scheduled to run into the dropped tables
+		await new Promise((r) => setTimeout(r, 50));
+		await expectSchemaOf(targets[1]);
+	});
+
+	it("should go from stock 4.6 down to stock 4.5, then tetra", async function () {
+		await store.downgrade_to(namedSchemaVersions["stock-4.6"]);
+		await expectSchemaOf(targets[1]);
+		await store.downgrade_to(namedSchemaVersions.stock);
+		await expectSchemaOf(targets[0]);
+		await store.downgrade_to(namedSchemaVersions.tetra);
+		await expectSchemaOf(targets[2]);
+	});
+
+	it("should refuse versions it can't downgrade to", async function () {
+		const attempt = async (version: number) => {
+			try {
+				await store.downgrade_to(version);
+			} catch (e) {
+				return (e as Error).message;
+			}
+
+			return null;
+		};
+
+		expect(await attempt(0)).to.match(/not a valid version/);
+		expect(await attempt(1234)).to.match(/not a valid version/);
+
+		await store.downgrade_to(namedSchemaVersions.tetra);
+		expect(await attempt(currentSchemaVersion)).to.match(/already older/);
+		expect(await store.current_version()).to.equal(namedSchemaVersions.tetra);
 	});
 });
 
@@ -1407,9 +1600,7 @@ describe("SQLite Message Storage", function () {
 		const ftsAt = migrations.findIndex((m) => m.version === 1794820000000);
 		const previous = migrations[ftsAt - 1].version;
 		await store.downgrade_to(previous);
-		store.database
-			.prepare("UPDATE options SET value = ? WHERE name = 'schema_version'")
-			.run(previous.toString());
+		expect(await store.current_version()).to.equal(previous);
 
 		expect(
 			store.database
